@@ -1,10 +1,20 @@
 //! Design tokens. Colours were chosen by eye to give a dark, studio-style look; they are ours.
 
 use egui::{Color32, FontFamily, FontId};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::hash::{Hash, Hasher};
+use std::io::Read;
+use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 /// Whether the Light palette is active. Dark is the default (the incumbent is dark-only).
 static LIGHT_THEME: AtomicBool = AtomicBool::new(false);
+
+/// Palette read by the painter-only widgets that do not carry `UiState`.
+/// 0/1 are Studio Dark/Light, then Nord, Dracula, Midnight Cyber and Custom.
+static ACTIVE_PALETTE: AtomicU8 = AtomicU8::new(0);
+static CUSTOM_TOKENS: RwLock<Tokens> = RwLock::new(Tokens::DARK);
+
+const MAX_THEME_FILE_BYTES: u64 = 64 * 1024;
 
 /// Unit tests that change or read the process-wide palette must own it until their assertions
 /// finish. The lock is re-entrant per thread, so a test may hold it and still build apps
@@ -66,24 +76,33 @@ mod palette_lock {
     }
 }
 
-/// The Appearance setting (`ui.theme {mode}`). Dark by default; System and Light are opt-in.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
+/// The Languages & Themes setting (`ui.theme {mode}`). Studio Dark remains the default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ThemeMode {
     System,
     Light,
     #[default]
     Dark,
+    Nord,
+    Dracula,
+    MidnightCyber,
+    Custom,
 }
 
 impl ThemeMode {
-    pub const ALL: [Self; 3] = [Self::Dark, Self::Light, Self::System];
+    pub const BUILT_INS: [Self; 6] = [Self::Dark, Self::Light, Self::Nord, Self::Dracula, Self::MidnightCyber, Self::System];
+    pub const ALL: [Self; 7] = [Self::Dark, Self::Light, Self::Nord, Self::Dracula, Self::MidnightCyber, Self::System, Self::Custom];
 
     pub const fn label(self) -> &'static str {
         match self {
-            Self::System => "System",
-            Self::Light => "Light",
-            Self::Dark => "Dark",
+            Self::System => "Follow System",
+            Self::Light => "Studio Light",
+            Self::Dark => "Studio Dark",
+            Self::Nord => "Nord Studio",
+            Self::Dracula => "Dracula Studio",
+            Self::MidnightCyber => "Midnight Cyber",
+            Self::Custom => "Custom JSON",
         }
     }
 
@@ -93,12 +112,141 @@ impl ThemeMode {
             Self::System => "system",
             Self::Light => "light",
             Self::Dark => "dark",
+            Self::Nord => "nord",
+            Self::Dracula => "dracula",
+            Self::MidnightCyber => "midnight-cyber",
+            Self::Custom => "custom",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|m| m.id().eq_ignore_ascii_case(s.trim()))
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeAppearance {
+    Light,
+    #[default]
+    Dark,
+}
+
+/// Portable, deliberately small theme schema. SoundCraft derives the many specialist DAW colors
+/// from these semantic colors so an imported file cannot make meters or record state disappear.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CustomTheme {
+    pub version: u32,
+    pub name: String,
+    #[serde(default)]
+    pub appearance: ThemeAppearance,
+    pub colors: CustomThemeColors,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CustomThemeColors {
+    pub background: String,
+    pub panel: String,
+    pub surface: String,
+    pub surface_hover: String,
+    pub border: String,
+    pub text: String,
+    pub text_muted: String,
+    pub accent: String,
+    pub success: String,
+    pub warning: String,
+    pub danger: String,
+}
+
+impl CustomTheme {
+    pub fn fingerprint(&self) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    pub fn is_light(&self) -> bool {
+        self.appearance == ThemeAppearance::Light
+    }
+
+    pub fn display_name(&self) -> &str {
+        self.name.trim()
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.version != 1 {
+            return Err(format!("unsupported theme version {}; expected 1", self.version));
+        }
+        let name_len = self.name.trim().chars().count();
+        if !(1..=64).contains(&name_len) {
+            return Err("theme name must contain 1–64 characters".into());
+        }
+        let panel = parse_hex(&self.colors.panel)?;
+        let text = parse_hex(&self.colors.text)?;
+        let muted = parse_hex(&self.colors.text_muted)?;
+        for value in [
+            &self.colors.background,
+            &self.colors.surface,
+            &self.colors.surface_hover,
+            &self.colors.border,
+            &self.colors.accent,
+            &self.colors.success,
+            &self.colors.warning,
+            &self.colors.danger,
+        ] {
+            let _ = parse_hex(value)?;
+        }
+        if contrast_ratio(text, panel) < 4.5 {
+            return Err("theme text must have at least 4.5:1 contrast against the panel color".into());
+        }
+        if contrast_ratio(muted, panel) < 4.5 {
+            return Err("theme text_muted must have at least 4.5:1 contrast against the panel color".into());
+        }
+        Ok(())
+    }
+
+    pub fn tokens(&self) -> Result<Tokens, String> {
+        self.validate()?;
+        let mut t = if self.is_light() { Tokens::LIGHT } else { Tokens::DARK };
+        let background = parse_hex(&self.colors.background)?;
+        let panel = parse_hex(&self.colors.panel)?;
+        let surface = parse_hex(&self.colors.surface)?;
+        let surface_hover = parse_hex(&self.colors.surface_hover)?;
+        let border = parse_hex(&self.colors.border)?;
+        let text = parse_hex(&self.colors.text)?;
+        let text_muted = parse_hex(&self.colors.text_muted)?;
+        let accent = parse_hex(&self.colors.accent)?;
+        let success = parse_hex(&self.colors.success)?;
+        let warning = parse_hex(&self.colors.warning)?;
+        let danger = parse_hex(&self.colors.danger)?;
+        apply_semantic_palette(
+            &mut t,
+            SemanticPalette { background, panel, surface, surface_hover, border, text, text_muted, accent, success, warning, danger },
+        );
+        Ok(t)
+    }
+}
+
+pub fn parse_custom_theme(json: &str) -> Result<CustomTheme, String> {
+    if json.len() as u64 > MAX_THEME_FILE_BYTES {
+        return Err("theme file is larger than 64 KiB".into());
+    }
+    let theme: CustomTheme = serde_json::from_str(json).map_err(|error| format!("invalid theme JSON: {error}"))?;
+    theme.validate()?;
+    Ok(theme)
+}
+
+pub fn load_custom_theme(path: &std::path::Path) -> Result<CustomTheme, String> {
+    let file = std::fs::File::open(path).map_err(|error| format!("cannot open theme: {error}"))?;
+    let mut bytes = Vec::new();
+    file.take(MAX_THEME_FILE_BYTES + 1).read_to_end(&mut bytes).map_err(|error| format!("cannot read theme: {error}"))?;
+    if bytes.len() as u64 > MAX_THEME_FILE_BYTES {
+        return Err("theme file is larger than 64 KiB".into());
+    }
+    let text = std::str::from_utf8(&bytes).map_err(|_| "theme file must be UTF-8".to_string())?;
+    parse_custom_theme(text)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -210,6 +358,128 @@ pub struct Tokens {
     pub slot_face: [Color32; 2],
     pub slot_bypassed: [Color32; 2],
     pub slot_mark: Color32,
+}
+
+#[derive(Clone, Copy)]
+struct SemanticPalette {
+    background: Color32,
+    panel: Color32,
+    surface: Color32,
+    surface_hover: Color32,
+    border: Color32,
+    text: Color32,
+    text_muted: Color32,
+    accent: Color32,
+    success: Color32,
+    warning: Color32,
+    danger: Color32,
+}
+
+fn parse_hex(value: &str) -> Result<Color32, String> {
+    let raw = value.trim().strip_prefix('#').unwrap_or(value.trim());
+    if raw.len() != 6 || !raw.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("invalid color `{value}`; expected #RRGGBB"));
+    }
+    let component = |range: std::ops::Range<usize>| {
+        u8::from_str_radix(raw.get(range).unwrap_or_default(), 16).map_err(|_| format!("invalid color `{value}`; expected #RRGGBB"))
+    };
+    Ok(Color32::from_rgb(component(0..2)?, component(2..4)?, component(4..6)?))
+}
+
+fn relative_luminance(color: Color32) -> f64 {
+    let channel = |value: u8| {
+        let value = f64::from(value) / 255.0;
+        if value <= 0.04045 { value / 12.92 } else { ((value + 0.055) / 1.055).powf(2.4) }
+    };
+    0.2126 * channel(color.r()) + 0.7152 * channel(color.g()) + 0.0722 * channel(color.b())
+}
+
+fn contrast_ratio(a: Color32, b: Color32) -> f64 {
+    let (bright, dark) = {
+        let a = relative_luminance(a);
+        let b = relative_luminance(b);
+        if a >= b { (a, b) } else { (b, a) }
+    };
+    (bright + 0.05) / (dark + 0.05)
+}
+
+fn shade(color: Color32, amount: f32) -> Color32 {
+    let k = amount.clamp(0.0, 1.0);
+    Color32::from_rgb((f32::from(color.r()) * k).round() as u8, (f32::from(color.g()) * k).round() as u8, (f32::from(color.b()) * k).round() as u8)
+}
+
+fn apply_semantic_palette(t: &mut Tokens, p: SemanticPalette) {
+    t.window_bg = p.background;
+    t.panel_bg = p.panel;
+    t.panel_bg2 = p.surface;
+    t.toolbar_bg = p.background;
+    t.toolbar_group = p.panel;
+    t.border = p.border;
+    t.border_light = p.surface_hover;
+    t.text = p.text;
+    t.text_dim = p.text_muted;
+    t.header_text = p.text;
+    t.counter_bg = p.background;
+    t.counter_text = p.success;
+    t.counter_label = p.text_muted;
+    t.accent = p.accent;
+    t.accent_dark = shade(p.accent, 0.72);
+    t.mode_on = p.success;
+    t.mode_off_text = p.success;
+    t.button = p.surface;
+    t.button_hi = p.surface_hover;
+    t.button_border = p.border;
+    t.ruler_bg = p.panel;
+    t.ruler_label_bg = p.panel;
+    t.ruler_text = p.text_muted;
+    t.ruler_tick = p.border;
+    t.marker_ruler = p.surface;
+    t.playlist_bg = p.panel;
+    t.playlist_alt = p.surface;
+    t.grid_line = p.surface;
+    t.bar_line = p.border;
+    t.selection = Color32::from_rgba_premultiplied(p.accent.r(), p.accent.g(), p.accent.b(), 105);
+    t.playhead = p.danger;
+    t.insertion = p.text;
+    t.solo = p.warning;
+    t.mute = p.warning;
+    t.rec = p.danger;
+    t.input = p.success;
+    t.auto_read = p.success;
+    t.auto_write = p.danger;
+    t.auto_touch = p.warning;
+    t.meter_green = p.success;
+    t.meter_yellow = p.warning;
+    t.meter_red = p.danger;
+    t.strip_bg = p.surface;
+    t.strip_section = p.panel;
+    t.slot_bg = p.background;
+    t.automation_line = p.text;
+    t.menu_bar = p.background;
+    t.group_border = p.border;
+    t.counter_border = p.border;
+    t.counter_rule = p.surface_hover;
+    t.tool_bracket_off = p.border;
+    t.row_selected = p.accent.gamma_multiply(0.55);
+    t.visible_dot = p.text_muted;
+    t.big_counter_bg = p.background;
+    t.header_selected = p.accent.gamma_multiply(0.42);
+    t.strip_selected = p.accent.gamma_multiply(0.42);
+    t.marker_text = p.text;
+    t.playlist_lane = p.background;
+    t.universe_bg = p.background;
+    t.universe_view = p.text;
+    t.meter_bg = shade(p.background, 0.55);
+    t.meter_clip_off = shade(p.danger, 0.38);
+    t.knob_bg = p.background;
+    t.knob_ring = p.text_muted;
+    t.knob_pointer = p.text;
+    t.section_label = p.text_muted;
+    t.slot_well = p.panel;
+    t.slot_empty = p.background;
+    t.slot_face = [p.surface_hover, p.surface];
+    t.slot_bypassed = [p.accent, shade(p.accent, 0.72)];
+    t.slot_mark = p.text_muted;
 }
 
 impl Tokens {
@@ -383,8 +653,81 @@ impl Tokens {
         slot_mark: Color32::from_rgb(92, 95, 102),
     };
 
+    pub fn nord() -> Tokens {
+        let mut tokens = Self::DARK;
+        apply_semantic_palette(
+            &mut tokens,
+            SemanticPalette {
+                background: Color32::from_rgb(46, 52, 64),
+                panel: Color32::from_rgb(59, 66, 82),
+                surface: Color32::from_rgb(67, 76, 94),
+                surface_hover: Color32::from_rgb(76, 86, 106),
+                border: Color32::from_rgb(94, 105, 126),
+                text: Color32::from_rgb(236, 239, 244),
+                text_muted: Color32::from_rgb(216, 222, 233),
+                accent: Color32::from_rgb(136, 192, 208),
+                success: Color32::from_rgb(163, 190, 140),
+                warning: Color32::from_rgb(235, 203, 139),
+                danger: Color32::from_rgb(191, 97, 106),
+            },
+        );
+        tokens
+    }
+
+    pub fn dracula() -> Tokens {
+        let mut tokens = Self::DARK;
+        apply_semantic_palette(
+            &mut tokens,
+            SemanticPalette {
+                background: Color32::from_rgb(33, 34, 44),
+                panel: Color32::from_rgb(40, 42, 54),
+                surface: Color32::from_rgb(52, 55, 70),
+                surface_hover: Color32::from_rgb(68, 71, 90),
+                border: Color32::from_rgb(98, 114, 164),
+                text: Color32::from_rgb(248, 248, 242),
+                // Brighter than Dracula's comment token so small DAW labels remain AA-readable.
+                text_muted: Color32::from_rgb(190, 197, 224),
+                accent: Color32::from_rgb(139, 233, 253),
+                success: Color32::from_rgb(80, 250, 123),
+                warning: Color32::from_rgb(241, 250, 140),
+                danger: Color32::from_rgb(255, 85, 85),
+            },
+        );
+        tokens
+    }
+
+    /// Original low-saturation cyber palette: cyan guides attention, while operational surfaces
+    /// stay neutral enough for long editing sessions.
+    pub fn midnight_cyber() -> Tokens {
+        let mut tokens = Self::DARK;
+        apply_semantic_palette(
+            &mut tokens,
+            SemanticPalette {
+                background: Color32::from_rgb(13, 19, 26),
+                panel: Color32::from_rgb(19, 28, 38),
+                surface: Color32::from_rgb(26, 39, 51),
+                surface_hover: Color32::from_rgb(34, 54, 69),
+                border: Color32::from_rgb(59, 83, 102),
+                text: Color32::from_rgb(230, 237, 243),
+                text_muted: Color32::from_rgb(170, 187, 199),
+                accent: Color32::from_rgb(97, 199, 194),
+                success: Color32::from_rgb(123, 196, 127),
+                warning: Color32::from_rgb(216, 184, 102),
+                danger: Color32::from_rgb(224, 108, 117),
+            },
+        );
+        tokens
+    }
+
     pub fn current() -> Tokens {
-        if is_light() { Self::LIGHT } else { Self::DARK }
+        match ACTIVE_PALETTE.load(Ordering::Relaxed) {
+            1 => Self::LIGHT,
+            2 => Self::nord(),
+            3 => Self::dracula(),
+            4 => Self::midnight_cyber(),
+            5 => *CUSTOM_TOKENS.read().unwrap_or_else(std::sync::PoisonError::into_inner),
+            _ => Self::DARK,
+        }
     }
 }
 
@@ -397,7 +740,7 @@ pub fn is_light() -> bool {
 pub fn wants_light(ctx: &egui::Context, mode: ThemeMode) -> bool {
     match mode {
         ThemeMode::Light => true,
-        ThemeMode::Dark => false,
+        ThemeMode::Dark | ThemeMode::Nord | ThemeMode::Dracula | ThemeMode::MidnightCyber | ThemeMode::Custom => false,
         ThemeMode::System => ctx.system_theme() == Some(egui::Theme::Light),
     }
 }
@@ -449,8 +792,36 @@ pub fn mono(size: f32) -> FontId {
     FontId::new(size, FontFamily::Monospace)
 }
 
-/// Make `light` (or dark) the active palette and apply its visuals. Call only when it changes.
+/// Apply a built-in or imported theme. Invalid persisted custom data safely falls back to Studio
+/// Dark; imports are validated before they ever reach this point.
+pub fn apply_mode(ctx: &egui::Context, mode: ThemeMode, custom: Option<&CustomTheme>) {
+    let light = match mode {
+        ThemeMode::Custom => custom.is_some_and(CustomTheme::is_light),
+        _ => wants_light(ctx, mode),
+    };
+    let (palette, custom_tokens) = match mode {
+        ThemeMode::Light => (1, None),
+        ThemeMode::Nord => (2, None),
+        ThemeMode::Dracula => (3, None),
+        ThemeMode::MidnightCyber => (4, None),
+        ThemeMode::Custom => custom.and_then(|theme| theme.tokens().ok()).map_or((0, None), |tokens| (5, Some(tokens))),
+        ThemeMode::System if light => (1, None),
+        ThemeMode::System | ThemeMode::Dark => (0, None),
+    };
+    if let Some(tokens) = custom_tokens {
+        *CUSTOM_TOKENS.write().unwrap_or_else(std::sync::PoisonError::into_inner) = tokens;
+    }
+    ACTIVE_PALETTE.store(palette, Ordering::Relaxed);
+    apply_visuals(ctx, light);
+}
+
+/// Make Studio Light (or Studio Dark) active. Kept for focused visual tests.
 pub fn apply(ctx: &egui::Context, light: bool) {
+    ACTIVE_PALETTE.store(u8::from(light), Ordering::Relaxed);
+    apply_visuals(ctx, light);
+}
+
+fn apply_visuals(ctx: &egui::Context, light: bool) {
     LIGHT_THEME.store(light, Ordering::Relaxed);
     let t = Tokens::current();
     let mut v = if light { egui::Visuals::light() } else { egui::Visuals::dark() };
@@ -539,10 +910,47 @@ mod tests {
         assert_eq!(app.run("ui.theme", json!({})), Ok(json!({"mode": "dark"})));
         assert_eq!(app.run("ui.theme", json!({"mode": "light"})), Ok(json!({"mode": "light"})));
         assert_eq!(app.ui.theme, ThemeMode::Light);
+        assert_eq!(app.run("ui.theme", json!({"mode": "nord"})), Ok(json!({"mode": "nord"})));
+        assert_eq!(app.ui.theme, ThemeMode::Nord);
+        assert!(app.run("ui.theme", json!({"mode": "custom"})).is_err());
         assert!(app.run("ui.theme", json!({"mode": "sepia"})).is_err());
-        assert_eq!(app.ui.theme, ThemeMode::Light);
+        assert_eq!(app.ui.theme, ThemeMode::Nord);
         assert_eq!(app.run("ui.theme", json!({"mode": "system"})), Ok(json!({"mode": "system"})));
         assert!(crate::menus::UI_COMMANDS.iter().any(|c| c.0 == "ui.theme"));
+    }
+
+    #[test]
+    fn custom_json_theme_is_bounded_validated_and_converted_to_tokens() {
+        let source = r##"{
+            "version": 1,
+            "name": "Quiet Ocean",
+            "appearance": "dark",
+            "colors": {
+                "background": "#0D151C", "panel": "#16212B", "surface": "#1D2C38",
+                "surface_hover": "#294052", "border": "#496477", "text": "#E6EDF3",
+                "text_muted": "#A9BBC7", "accent": "#68B7C8", "success": "#84B98A",
+                "warning": "#D2B36F", "danger": "#D9787F"
+            }
+        }"##;
+        let theme = parse_custom_theme(source).unwrap();
+        let tokens = theme.tokens().unwrap();
+        assert_eq!(theme.display_name(), "Quiet Ocean");
+        assert_eq!(tokens.panel_bg, Color32::from_rgb(22, 33, 43));
+        assert_eq!(tokens.accent, Color32::from_rgb(104, 183, 200));
+
+        let unreadable = source.replace("#E6EDF3", "#16212B");
+        assert!(parse_custom_theme(&unreadable).is_err());
+        let malformed = source.replace("#68B7C8", "blue");
+        assert!(parse_custom_theme(&malformed).is_err());
+        assert!(parse_custom_theme(&" ".repeat((MAX_THEME_FILE_BYTES + 1) as usize)).is_err());
+    }
+
+    #[test]
+    fn long_session_palettes_keep_primary_and_muted_text_readable() {
+        for (name, tokens) in [("Nord Studio", Tokens::nord()), ("Dracula Studio", Tokens::dracula()), ("Midnight Cyber", Tokens::midnight_cyber())] {
+            assert!(contrast_ratio(tokens.text, tokens.panel_bg) >= 4.5, "{name} primary text");
+            assert!(contrast_ratio(tokens.text_dim, tokens.panel_bg) >= 4.5, "{name} muted text");
+        }
     }
 
     #[test]

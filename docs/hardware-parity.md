@@ -1,6 +1,6 @@
 # Hardware parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** trivial (bounces of a bus fed by an aux compensate its latency (#246); previously minor: audio device, rate and buffer choice; ASIO feature) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-17 · **Last updated:** 2026-10-17 · **Change:** minor (corrected record-to-disk and real-time-discipline status) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 A DAW is judged by how it drives audio interfaces, MIDI gear, control surfaces and sync. This is
 SoundCraft's weakest dimension. Ours is measured from `crates/playback` (cpal) and the absence of
@@ -25,7 +25,7 @@ Legend: ✅ works · 🟡 partial · ❌ missing.
 | Latency reporting and record offset compensation | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | Sample rate follows the session; resample when it can't | ✅ (switches device) | 🟡 resamples (input pitch bug fixed, #28) | 🟡 | 🟡 | 🟡 | 🟡 |
 | Avid HDX / HD Native DSP, Hybrid Engine DSP mode | ✅ | ❌ (out of reach: Avid hardware) | ❌ | ❌ | ❌ | ❌ |
-| Disk allocation / record to disk | ✅ | ❌ recording into RAM (PR #84) | ❌ | ❌ | ❌ | ❌ |
+| Disk allocation / record to disk | ✅ | 🟡 writer thread streams WAV; hardware not reverified | ✅ writer thread streams WAV | 🟡 implementation present, hardware not verified | ❌ no recording | ❌ |
 
 ## MIDI
 
@@ -64,14 +64,15 @@ Legend: ✅ works · 🟡 partial · ❌ missing.
 | Plugin delay compensation | ✅ | ✅ | Bounces of a bus that an aux returns onto are compensated like the main mix (#246). |
 | Disk streaming of long sources | ✅ | ❌ | Whole files decoded into the `SourcePool` |
 | Track count (Ultimate: 2,048 voices) | ✅ | unmeasured | No benchmark exists; add `cargo xtask bench` |
-| Real-time audio thread discipline | ✅ | ✅ | No blocking/allocation in steady state, audio-thread-aware logger |
-| Freeze / commit to save CPU | ✅ | 🟡 | `track.commit` renders; `track.freeze` only sets a flag (no CPU saved) |
+| Real-time audio thread discipline | ✅ | 🟡 | Steady state is largely preallocated and logging is audio-thread-aware; structural session sync can still allocate and needs instrumentation |
+| Freeze / commit to save CPU | ✅ | 🟡 | `track.commit` renders; creating a freeze is disabled until an offline render/swap path exists |
 | GPU-accelerated UI | — | ✅ (wgpu/glow via eframe) | llvmpipe X11 issue #107 |
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-17 | minor | Recording streams to WAV; RT structural-sync and Freeze limitations made explicit |
 | 2026-10-13 | trivial | bounces of a bus fed by an aux compensate its latency (#246) |
 | 2026-10-12 | minor | Audio device settings: system, output, input, sample rate and buffer size; opt-in ASIO |
 | 2026-10-10 | major | Created: audit of audio interface, MIDI, control-surface, sync and performance support against Pro Tools 2026.4.1 |

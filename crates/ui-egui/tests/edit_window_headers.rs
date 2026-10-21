@@ -65,12 +65,13 @@ fn harness(track: &str, height: &str, view: &str) -> (Harness<'static, SoundApp>
 }
 
 #[test]
-fn header_keys_freeze_silence_and_show_automation() {
+fn header_keys_reject_incomplete_freeze_but_support_other_actions() {
     let (mut h, _, row) = harness("Kick", "medium", "view.edit_io");
     let at = |x: f32, y: f32| pos2(row[0] + x, row[1] + y);
 
     click(&mut h, at(23.5, 65.5));
-    assert!(kick(&h).frozen);
+    assert!(!kick(&h).frozen);
+    assert!(h.state().ui.status.contains("freeze rendering is not implemented"));
 
     click(&mut h, at(46.5, 65.5));
     let off = h.get_by_label("off").rect().center();

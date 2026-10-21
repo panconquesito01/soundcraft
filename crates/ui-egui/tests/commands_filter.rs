@@ -29,6 +29,7 @@ fn filter_applies_to_ui_commands() {
 fn absent_or_empty_filter_lists_every_ui_command() {
     for params in [json!({}), json!({"filter": ""})] {
         let rows = commands(params);
+        assert!(rows.iter().all(|row| row["status"].as_str().is_some()), "every command needs an audited capability status");
         let ids = ids(&rows);
         for (id, ..) in menus::UI_COMMANDS {
             assert!(ids.contains(id), "{id} missing");

@@ -24,6 +24,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
     ("window.session_info", "Session Info", "", None),
     ("window.audio_health", "Session Audio Health", "", None),
     ("window.about", "About SoundCraft", "", None),
+    ("window.dashboard", "Dashboard", "", Some("Cmd+Alt+O")),
     ("window.close", "Close Window", "Window > Close Window", Some("Cmd+W")),
     ("window.hide_floating", "Hide All Floating Windows", "Window > Hide All Floating Windows", Some("Cmd+Ctrl+W")),
     ("window.midi_editor", "MIDI Editor", "Window > MIDI Editor", None),
@@ -48,7 +49,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
     ("window.config_update", "Update Active Configuration", "Window > Configurations > Update Active Configuration", None),
     ("window.config_auto_update", "Auto-Update Active Configuration", "Window > Configurations > Auto-Update Active Configuration", None),
     ("window.renderer", "Renderer", "Window > Renderer", None),
-    ("window.ui_customization", "UI Customization", "Window > UI Customization", None),
+    ("window.ui_customization", "Languages & Themes", "Window > Languages & Themes", None),
     ("window.arrange_tile", "Tile", "Window > Arrange > Tile", None),
     ("window.arrange_tile_h", "Tile Horizontal", "Window > Arrange > Tile Horizontal", None),
     ("window.arrange_tile_v", "Tile Vertical", "Window > Arrange > Tile Vertical", None),
@@ -72,12 +73,16 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
     ("ui.new_tracks_dialog", "New Tracks…", "", None),
     ("ui.bounce_dialog", "Bounce Mix…", "", None),
     ("ui.set", "Set UI State", "", None),
-    ("ui.theme", "Appearance", "", None),
+    ("ui.theme", "Theme", "", None),
 ];
 
 /// Extra catalog mappings handled by the UI layer.
 pub fn ui_aliases() -> Vec<(&'static str, &'static str)> {
     let mut v: Vec<(&str, &str)> = UI_COMMANDS.iter().filter(|c| !c.2.is_empty()).map(|c| (c.2, c.0)).collect();
+    // Keep automation and old saved scripts working after the clearer user-facing rename.
+    // These aliases are not rendered as duplicate menu entries.
+    v.push(("Window > UI Customization", "window.ui_customization"));
+    v.push(("Setup > Appearance", "window.ui_customization"));
     v.extend(mix_view_aliases().iter().copied());
     v.extend(AUDIOSUITE.iter().map(|(p, _)| (*p, "audiosuite.process")));
     v.extend(MENU_WINDOWS.iter().copied());
@@ -199,7 +204,10 @@ fn insert_path(roots: &mut Vec<MenuNode>, line: &str) {
 pub fn tree() -> Vec<MenuNode> {
     let mut roots: Vec<MenuNode> = Vec::new();
     for line in catalog::catalog() {
-        insert_path(&mut roots, line);
+        // The catalog records the incumbent's observed wording for parity measurement. Keep that
+        // evidence unchanged, but present SoundCraft's clearer product name in the actual menu.
+        let visible_path = if line == "Window > UI Customization" { "Window > Languages & Themes" } else { line };
+        insert_path(&mut roots, visible_path);
     }
     insert_path(&mut roots, "Window > Reset Panel Layout");
     // Not in the incumbent catalog, but the only UI path to an empty MIDI clip (#282).
@@ -216,58 +224,45 @@ pub fn tree() -> Vec<MenuNode> {
 
 pub fn menu_bar(app: &mut SoundApp, ui: &mut egui::Ui) {
     let t = crate::theme::Tokens::current();
+    let language = app.ui.language;
     egui::Panel::top("menu_bar").exact_size(24.0).frame(egui::Frame::NONE.fill(t.menu_bar).inner_margin(egui::Margin::symmetric(8, 2))).show(
         ui,
         |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("SoundCraft", |ui| {
-                    if ui.button("About SoundCraft").clicked() {
+                    if ui.button(crate::i18n::text(language, "About SoundCraft")).clicked() {
                         app.ui.show_about = true;
                     }
-                    if ui.button("Session Info").clicked() {
+                    if ui.button(crate::i18n::text(language, "Session Info")).clicked() {
                         app.ui.show_session_info = true;
                     }
-                    if ui.button("Session Audio Health").clicked() {
+                    if ui.button(crate::i18n::text(language, "Session Audio Health")).clicked() {
                         let _ = app.run("window.audio_health", json!({"value": true}));
                     }
                     ui.separator();
-                    if ui.button("Quit").clicked() {
+                    if ui.button(crate::i18n::text(language, "Quit")).clicked() {
                         let _ = crate::dialogs::run_or_ask(app, "app.quit", json!({}));
                     }
                 });
                 let extra = ui_aliases();
-                for root in tree() {
-                    ui.menu_button(&root.label, |ui| {
-                        for c in &root.children {
-                            menu_node(app, ui, c, &extra);
-                            if c.path == "File > Open" {
-                                crate::recent::menu(app, ui);
-                            }
-                        }
-                        if root.label == "AudioSuite" {
-                            ui.separator();
-                            ui.label(egui::RichText::new("Processes selected clips offline").small().color(t.text_dim));
-                        }
-                        if root.label == "Window" {
-                            ui.separator();
-                            let mut separate = app.ui.mix_separate;
-                            if ui
-                                .checkbox(&mut separate, "Mix in Separate Window")
-                                .on_hover_text("Show Edit and Mix at once, e.g. one per monitor")
-                                .changed()
-                            {
-                                let _ = run_ui_command(app, "window.mix_separate", &json!({"value": separate}));
-                                ui.close();
-                            }
+                let compact = compact_menu_for_width(ui.available_width());
+                if compact {
+                    ui.menu_button(crate::i18n::text(language, "Menu"), |ui| {
+                        for root in tree() {
+                            root_menu(app, ui, &root, &extra, t.text_dim);
                         }
                     });
+                } else {
+                    for root in tree() {
+                        root_menu(app, ui, &root, &extra, t.text_dim);
+                    }
                 }
-                let title = format!(
-                    "{}{}  —  {}",
-                    app.engine.session().name,
-                    if app.engine.is_dirty() { " *" } else { "" },
-                    if app.ui.window == MainWindow::Edit || app.ui.mix_separate { "Edit" } else { "Mix" }
-                );
+                let window = if app.ui.window == MainWindow::Edit || app.ui.mix_separate { "Edit" } else { "Mix" };
+                let title = if compact {
+                    window.to_string()
+                } else {
+                    format!("{}{}  —  {window}", app.engine.session().name, if app.engine.is_dirty() { " *" } else { "" })
+                };
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(egui::RichText::new(title).color(t.text_dim));
                 });
@@ -276,9 +271,50 @@ pub fn menu_bar(app: &mut SoundApp, ui: &mut egui::Ui) {
     );
 }
 
+fn compact_menu_for_width(width: f32) -> bool {
+    width < 720.0
+}
+
+fn root_menu(app: &mut SoundApp, ui: &mut egui::Ui, root: &MenuNode, extra: &[(&str, &str)], text_dim: egui::Color32) {
+    ui.menu_button(crate::i18n::text(app.ui.language, &root.label), |ui| {
+        for child in &root.children {
+            menu_node(app, ui, child, extra);
+            if child.path == "File > Open" {
+                crate::recent::menu(app, ui);
+            }
+        }
+        if root.label == "File" {
+            ui.separator();
+            let shortcut = shortcut_for("window.dashboard").unwrap_or("");
+            if ui
+                .add(
+                    egui::Button::new(crate::i18n::text(app.ui.language, "Dashboard"))
+                        .shortcut_text(crate::shortcuts::shortcut_label(shortcut, ui.ctx().os().is_mac())),
+                )
+                .clicked()
+            {
+                let _ = app.run("window.dashboard", json!({"value": true}));
+                ui.close();
+            }
+        }
+        if root.label == "AudioSuite" {
+            ui.separator();
+            ui.label(egui::RichText::new("Processes selected clips offline").small().color(text_dim));
+        }
+        if root.label == "Window" {
+            ui.separator();
+            let mut separate = app.ui.mix_separate;
+            if ui.checkbox(&mut separate, "Mix in Separate Window").on_hover_text("Show Edit and Mix at once, e.g. one per monitor").changed() {
+                let _ = run_ui_command(app, "window.mix_separate", &json!({"value": separate}));
+                ui.close();
+            }
+        }
+    });
+}
+
 fn menu_node(app: &mut SoundApp, ui: &mut egui::Ui, n: &MenuNode, extra: &[(&str, &str)]) {
     if !n.children.is_empty() {
-        ui.menu_button(&n.label, |ui| {
+        ui.menu_button(crate::i18n::text(app.ui.language, &n.label), |ui| {
             for c in &n.children {
                 menu_node(app, ui, c, extra);
             }
@@ -288,6 +324,7 @@ fn menu_node(app: &mut SoundApp, ui: &mut egui::Ui, n: &MenuNode, extra: &[(&str
     let id = command_for_path(&n.path, extra);
     let (enabled, checked) = item_state(app, &n.path, id.as_deref());
     let label = live_label(app, id.as_deref()).unwrap_or_else(|| n.label.clone());
+    let label = crate::i18n::text(app.ui.language, &label).to_owned();
     let label = if checked { format!("✔ {label}") } else { label };
     let shortcut = id.as_deref().and_then(shortcut_for).unwrap_or("");
     let btn = egui::Button::new(label).shortcut_text(crate::shortcuts::shortcut_label(shortcut, ui.ctx().os().is_mac()));
@@ -407,7 +444,7 @@ fn params_for(path: &str, id: &str) -> Value {
 
 /// Menu items that open a SoundCraft window when clicked (programmatic calls still run the command).
 const MENU_WINDOWS: &[(&str, &str)] = &[
-    ("Setup > Appearance", "window.ui_customization"),
+    ("Setup > Languages & Themes", "window.ui_customization"),
     ("Setup > Hardware...", "window.playback_engine"),
     ("Setup > Playback Engine...", "window.playback_engine"),
     ("Setup > I/O...", "window.io_setup"),
@@ -496,6 +533,7 @@ pub fn run_ui_command(app: &mut SoundApp, id: &str, p: &Value) -> Option<Result<
             app.focus_mix = app.ui.mix_separate;
             json!({"window": "mix"})
         }
+        "window.dashboard" => toggle(&mut app.ui.show_dashboard),
         "window.mix_separate" => {
             let v = toggle(&mut app.ui.mix_separate);
             app.focus_mix = app.ui.mix_separate;
@@ -633,8 +671,11 @@ pub fn run_ui_command(app: &mut SoundApp, id: &str, p: &Value) -> Option<Result<
                 return Some(Ok(json!({"mode": app.ui.theme.id()})));
             };
             let Some(mode) = crate::theme::ThemeMode::parse(mode) else {
-                return Some(Err(format!("unknown theme `{mode}` (system, light or dark)")));
+                return Some(Err(format!("unknown theme `{mode}`")));
             };
+            if mode == crate::theme::ThemeMode::Custom && app.ui.custom_theme.is_none() {
+                return Some(Err("import a custom JSON theme before selecting `custom`".into()));
+            }
             app.ui.theme = mode;
             json!({"mode": mode.id()})
         }
@@ -686,6 +727,22 @@ mod tests {
     }
 
     #[test]
+    fn narrow_menu_collapses_before_it_can_overlap_the_window_title() {
+        assert!(compact_menu_for_width(480.0));
+        assert!(compact_menu_for_width(719.0));
+        assert!(!compact_menu_for_width(960.0));
+    }
+
+    #[test]
+    fn window_menu_uses_the_soundcraft_languages_and_themes_name() {
+        let roots = tree();
+        let window = roots.iter().find(|node| node.label == "Window").expect("Window menu");
+        assert!(window.children.iter().any(|node| node.label == "Languages & Themes"));
+        assert!(!window.children.iter().any(|node| node.label == "UI Customization"));
+        assert_eq!(command_for_path("Window > Languages & Themes", &ui_aliases()).as_deref(), Some("window.ui_customization"));
+    }
+
+    #[test]
     fn programmatic_dialog_commands_stay_closed_and_the_menu_opens_them() {
         let mut app = SoundApp::new(soundcraft_engine::Engine::default(), None, Services::default());
         let err = app.run("ui.new_tracks_dialog", json!({})).unwrap_err();
@@ -718,6 +775,7 @@ mod tests {
         invoke_menu(&mut app, "session.save", "File > Save Session");
         assert!(app.dialogs.open.is_none());
         assert!(!app.engine.is_dirty());
+        drop(app);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

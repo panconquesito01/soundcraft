@@ -8,5 +8,6 @@ plan/
 /.claude/
 /target-*/
 /craft-fonts/
+graphify-out/
 plans/
 .DS_Store

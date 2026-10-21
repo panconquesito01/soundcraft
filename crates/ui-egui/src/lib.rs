@@ -12,6 +12,7 @@ pub mod docking;
 pub mod edit_window;
 pub mod extra_windows;
 pub mod fonts;
+pub mod i18n;
 pub mod icons;
 pub mod menus;
 pub mod midi_editor;
@@ -70,7 +71,15 @@ pub struct UiState {
     pub show_session_info: bool,
     pub show_audio_health: bool,
     pub show_about: bool,
+    /// Start/recent-session hub, reachable with Ctrl+Alt+O on Windows/Linux.
+    pub show_dashboard: bool,
+    /// Display language. Untranslated strings safely fall back to English.
+    pub language: i18n::Language,
     pub show_midi_editor: bool,
+    /// Piano Roll key labels. Presentation-only: these never change MIDI pitch data.
+    pub midi_note_labels: midi_editor::NoteLabelMode,
+    pub midi_note_language: soundcraft_midi::NoteLanguage,
+    pub midi_accidentals: soundcraft_midi::AccidentalStyle,
     pub show_universe: bool,
     pub narrow_mix: bool,
     /// Mix window sections: inserts_ae, inserts_fj, sends_ae, sends_fj, io, comments, eq_curve, color.
@@ -118,8 +127,10 @@ pub struct UiState {
     pub video_burn_in: bool,
     pub workspace_dir: String,
     pub configurations: Vec<(String, Value)>,
-    /// Appearance (`ui.theme`): dark by default, light or follow the system on request.
+    /// Languages & Themes (`ui.theme`): Studio Dark by default, with built-in and imported palettes.
     pub theme: theme::ThemeMode,
+    /// Validated portable JSON theme. Kept in preferences so the source file may be moved later.
+    pub custom_theme: Option<theme::CustomTheme>,
     /// The main window's size (logical points) and maximized state, and the interface scale, as
     /// the desktop app last saw them; it restores them at launch.
     pub window_size: [f32; 2],
@@ -143,7 +154,12 @@ impl Default for UiState {
             show_session_info: false,
             show_audio_health: false,
             show_about: false,
+            show_dashboard: false,
+            language: i18n::Language::English,
             show_midi_editor: false,
+            midi_note_labels: midi_editor::NoteLabelMode::Roots,
+            midi_note_language: soundcraft_midi::NoteLanguage::English,
+            midi_accidentals: soundcraft_midi::AccidentalStyle::Sharps,
             show_universe: false,
             narrow_mix: false,
             mix_views: vec!["inserts_ae".into(), "sends_ae".into(), "io".into(), "color".into()],
@@ -182,6 +198,7 @@ impl Default for UiState {
             workspace_dir: String::new(),
             configurations: Vec::new(),
             theme: theme::ThemeMode::Dark,
+            custom_theme: None,
             window_size: [1600.0, 1000.0],
             window_maximized: false,
             ui_scale: 1.0,
@@ -304,8 +321,8 @@ pub struct SoundApp {
     last_rev: u64,
     fonts_ready: bool,
     fonts_installed: bool,
-    /// The palette last applied to the context (light?), so visuals are set only on a change.
-    theme_applied: Option<bool>,
+    /// The palette last applied to the context, so visuals are set only on a real change.
+    theme_applied: Option<(theme::ThemeMode, bool, u64)>,
     /// Last panel host context, used to cancel renderer-owned gestures on explicit replacement.
     pub(crate) docking_context: Option<egui::Context>,
     /// Transport simulation when there is no player (tests, offscreen renders).
@@ -1122,10 +1139,15 @@ impl SoundApp {
                 ctx.request_repaint();
             }
         }
-        let light = theme::wants_light(ctx, self.ui.theme);
-        if self.theme_applied != Some(light) || theme::is_light() != light {
-            theme::apply(ctx, light);
-            self.theme_applied = Some(light);
+        let light = match self.ui.theme {
+            theme::ThemeMode::Custom => self.ui.custom_theme.as_ref().is_some_and(theme::CustomTheme::is_light),
+            mode => theme::wants_light(ctx, mode),
+        };
+        let fingerprint = self.ui.custom_theme.as_ref().map_or(0, theme::CustomTheme::fingerprint);
+        let applied = (self.ui.theme, light, fingerprint);
+        if self.theme_applied != Some(applied) || theme::is_light() != light {
+            theme::apply_mode(ctx, self.ui.theme, self.ui.custom_theme.as_ref());
+            self.theme_applied = Some(applied);
         }
         let now = ctx.input(|i| i.time);
         let dt = self.last_frame.replace(now).map_or(1.0 / 60.0, |t| (now - t) as f32).clamp(0.0, 0.25);
@@ -1216,6 +1238,8 @@ impl SoundApp {
             ctx.memory_mut(|m| m.reset_areas());
         }
         shortcuts::handle(self, &ctx);
+        // Panels set contextual hover during this frame; shortcuts consume the preceding frame.
+        self.midi.hovered = false;
         self.sample_drop_targets.clear();
         if !self.native_menu_bar {
             menus::menu_bar(self, ui);
@@ -1388,6 +1412,9 @@ mod tests {
         let raw = egui::RawInput { viewports: [(egui::ViewportId::ROOT, hidden)].into_iter().collect(), ..Default::default() };
         let _ = egui::Context::default().run_logic(&raw, |ctx| app.logic(ctx));
         assert!(app.latest_autosave().is_some());
+        // The autosaver owns a background writer. Drop it before removing its directory so
+        // Windows never invalidates a handle that the worker is still closing.
+        drop(app);
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1504,6 +1531,31 @@ mod tests {
     fn preferences_saved_before_the_window_was_remembered_keep_full_scale() {
         let ui: super::UiState = serde_json::from_value(json!({"show_transport": true})).unwrap();
         assert_eq!((ui.window_size, ui.window_maximized, ui.ui_scale), ([1600.0, 1000.0], false, 1.0));
+        assert_eq!(ui.midi_note_labels, super::midi_editor::NoteLabelMode::Roots);
+        assert_eq!(ui.midi_note_language, soundcraft_midi::NoteLanguage::English);
+        assert_eq!(ui.midi_accidentals, soundcraft_midi::AccidentalStyle::Sharps);
+        assert_eq!(ui.language, super::i18n::Language::English);
+    }
+
+    #[test]
+    fn piano_roll_note_preferences_round_trip() {
+        let ui = super::UiState {
+            midi_note_labels: super::midi_editor::NoteLabelMode::All,
+            midi_note_language: soundcraft_midi::NoteLanguage::Spanish,
+            midi_accidentals: soundcraft_midi::AccidentalStyle::Flats,
+            language: super::i18n::Language::Portuguese,
+            ..super::UiState::default()
+        };
+        let value = serde_json::to_value(&ui).unwrap_or_default();
+        assert_eq!(value["midi_note_labels"], "all");
+        assert_eq!(value["midi_note_language"], "spanish");
+        assert_eq!(value["midi_accidentals"], "flats");
+        assert_eq!(value["language"], "portuguese");
+        let restored: super::UiState = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.midi_note_labels, super::midi_editor::NoteLabelMode::All);
+        assert_eq!(restored.midi_note_language, soundcraft_midi::NoteLanguage::Spanish);
+        assert_eq!(restored.midi_accidentals, soundcraft_midi::AccidentalStyle::Flats);
+        assert_eq!(restored.language, super::i18n::Language::Portuguese);
     }
 
     #[test]

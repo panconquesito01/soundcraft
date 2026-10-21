@@ -115,7 +115,16 @@ fn handle(app: &mut SoundApp, ctx: &egui::Context, req: &ControlRequest) -> Opti
             };
             if let Some(arr) = list.as_array_mut() {
                 for (id, label, path, sc) in crate::menus::UI_COMMANDS.iter().filter(|c| matches(c.0, c.1)) {
-                    arr.push(json!({"id": id, "label": label, "menu": path, "shortcut": sc, "enabled": true, "params": "{}"}));
+                    arr.push(json!({
+                        "id": id,
+                        "label": label,
+                        "menu": path,
+                        "shortcut": sc,
+                        "enabled": true,
+                        "params": "{}",
+                        "status": "ui_only",
+                        "evidence": "crates/ui-egui/src/menus.rs",
+                    }));
                 }
             }
             ok(list)

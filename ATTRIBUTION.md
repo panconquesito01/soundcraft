@@ -45,3 +45,12 @@ and, at runtime, the operating system's own UI fonts when available (never redis
 | `assets/app-icon/soundcraft.ico` | SoundCraft contributors | original, rendered from `icon.svg` | MIT OR Apache-2.0 |
 | `assets/app-icon/hicolor/` | SoundCraft contributors | original, rendered from `icon.svg` (16–512 px PNGs and the scalable SVG) | MIT OR Apache-2.0 |
 | `docs/images/` | SoundCraft contributors | screenshots of SoundCraft rendered from the synthesised demo session | MIT OR Apache-2.0 |
+| `docs/examples/theme-midnight-ocean.json` | SoundCraft contributors | original low-saturation theme example | MIT OR Apache-2.0 |
+
+## Color palette references
+
+The built-in **Nord Studio** palette adapts Nord by Sven Greb
+([official palette](https://www.nordtheme.com/docs/colors-and-palettes/), MIT). The built-in
+**Dracula Studio** palette adapts Dracula Classic
+([official specification](https://draculatheme.com/spec), MIT). Both are mapped to SoundCraft's
+original DAW component system; no icons, artwork, source code or other theme assets are bundled.

@@ -1,4 +1,4 @@
-//! `cargo xtask <ci|layers|assets|parity|wasm>` — repository gates.
+//! `cargo xtask <ci|layers|assets|parity|capabilities|wasm>` — repository gates.
 
 mod ico;
 mod version;
@@ -116,6 +116,14 @@ fn parity() -> Result<(), String> {
     cargo(&["run", "-q", "-p", "soundcraft-cli", "--", "parity", "--write", "docs/parity-checklist.md"])
 }
 
+fn capabilities() -> Result<(), String> {
+    cargo(&["run", "-q", "-p", "soundcraft-cli", "--", "capabilities", "--write", "docs/command-capabilities.md"])
+}
+
+fn capabilities_check() -> Result<(), String> {
+    cargo(&["run", "-q", "-p", "soundcraft-cli", "--", "capabilities", "--check", "docs/command-capabilities.md"])
+}
+
 /// Crates that must compile for the web.
 const WASM: &[&str] = &[
     "soundcraft-time",
@@ -148,7 +156,11 @@ fn ci() -> Result<(), String> {
     let steps: Vec<(&str, Box<dyn Fn() -> Result<(), String>>)> = vec![
         ("fmt", Box::new(|| cargo(&["fmt", "--all", "--", "--check"]))),
         ("clippy", Box::new(|| cargo(&["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]))),
-        ("test", Box::new(|| cargo(&["test", "--workspace"]))),
+        // Several UI tests exercise process-global egui/Windows resources and background
+        // autosave handles. Running test functions concurrently can terminate the Windows
+        // harness with STATUS_INVALID_HANDLE even though each test passes in isolation.
+        ("test", Box::new(|| cargo(&["test", "--workspace", "--", "--test-threads=1"]))),
+        ("capabilities", Box::new(capabilities_check)),
         ("assets", Box::new(assets)),
         ("layers", Box::new(layers)),
         ("wasm", Box::new(wasm)),
@@ -175,10 +187,11 @@ fn main() -> ExitCode {
         Some("layers") => layers(),
         Some("assets") => assets(),
         Some("parity") => parity(),
+        Some("capabilities") => capabilities(),
         Some("wasm") => wasm(),
         Some("version") => version::run(args.get(1..).unwrap_or(&[])),
         Some("ico") => ico::run(args.get(1..).unwrap_or(&[])),
-        _ => Err("usage: cargo xtask <ci|layers|assets|parity|wasm|version>".into()),
+        _ => Err("usage: cargo xtask <ci|layers|assets|parity|capabilities|wasm|version>".into()),
     };
     match r {
         Ok(()) => ExitCode::SUCCESS,

@@ -23,7 +23,7 @@ use soundcraft_time::Samples;
 use std::cell::Cell;
 use std::sync::Arc;
 
-pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
+pub use cmd::{CapabilityStatus, CommandInfo, CommandSpec, command_specs, find_command};
 pub use soundcraft_model as model;
 
 /// Shuts the third-party plugin hosts down, running the module exit of every plugin binary they
@@ -94,6 +94,10 @@ pub struct Clipboard {
     pub grid_offset: Samples,
     /// Copy Special › Automation: pasting it leaves the clips alone, in Shuffle mode too.
     pub automation_only: bool,
+    /// MIDI notes copied in the Piano Roll, with starts relative to the earliest copied note.
+    pub midi_notes: Vec<soundcraft_midi::Note>,
+    /// Span from the earliest copied note to the latest note end, in MIDI ticks.
+    pub midi_length_ticks: i64,
 }
 
 impl Clipboard {

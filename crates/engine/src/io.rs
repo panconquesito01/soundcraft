@@ -5,11 +5,16 @@ use serde_json::{Value, json};
 use soundcraft_audio_io::{AudioBuffer, EncodeOptions, FileFormat};
 use soundcraft_model::{BusId, ChannelFormat, Clip, ClipContent, Session, Source, SourceAudio, SourceId, TrackId, TrackKind};
 use soundcraft_time::{Range, Samples};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Largest import we accept (samples per channel × channels), ~4 GiB of f32.
 pub(crate) const MAX_IMPORT_SAMPLES: usize = 1 << 30;
+/// Largest single file read wholly into memory. Larger media needs the future streaming path.
+const MAX_IN_MEMORY_FILE_BYTES: u64 = 1 << 30;
+/// Session, preset and clip-group JSON is metadata, not media.
+const MAX_TEXT_FILE_BYTES: u64 = 64 << 20;
 
 /// `buf` converted to `rate`, unless it would then hold more than `limit` samples: a file with a
 /// tiny sample rate grows by orders of magnitude.
@@ -38,19 +43,36 @@ pub(crate) fn at_rate(mut buf: AudioBuffer, rate: u32, limit: usize) -> Option<A
 /// one. Only a regular file qualifies: a device or a pipe named by a session or a command would
 /// never end or never answer. Errors name the file.
 pub fn read_file(path: impl AsRef<Path>) -> Result<Vec<u8>> {
+    read_file_limited(path, MAX_IN_MEMORY_FILE_BYTES)
+}
+
+fn read_file_limited(path: impl AsRef<Path>, max_bytes: u64) -> Result<Vec<u8>> {
     let path = path.as_ref();
     crate::file_access::check_read(path).map_err(EngineError::Io)?;
     let err = |err: std::io::Error| EngineError::Io(format!("{}: {err}", path.display()));
-    if !std::fs::metadata(path).map_err(err)?.is_file() {
+    let metadata = std::fs::metadata(path).map_err(err)?;
+    if !metadata.is_file() {
         return Err(EngineError::Io(format!("{}: not a regular file", path.display())));
     }
-    std::fs::read(path).map_err(err)
+    if metadata.len() > max_bytes {
+        return Err(EngineError::Io(format!("{}: file is too large ({} bytes; limit {max_bytes})", path.display(), metadata.len())));
+    }
+    let capacity =
+        usize::try_from(metadata.len()).map_err(|_| EngineError::Io(format!("{}: file is too large for this platform", path.display())))?;
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(capacity).map_err(|_| EngineError::Io(format!("{}: not enough memory for {capacity} bytes", path.display())))?;
+    let file = std::fs::File::open(path).map_err(err)?;
+    file.take(max_bytes.saturating_add(1)).read_to_end(&mut bytes).map_err(err)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(EngineError::Io(format!("{}: file grew beyond the {max_bytes}-byte limit while it was read", path.display())));
+    }
+    Ok(bytes)
 }
 
 /// [`read_file`] as UTF-8 text.
 pub fn read_text(path: impl AsRef<Path>) -> Result<String> {
     let path = path.as_ref();
-    String::from_utf8(read_file(path)?).map_err(|err| EngineError::Io(format!("{}: {err}", path.display())))
+    String::from_utf8(read_file_limited(path, MAX_TEXT_FILE_BYTES)?).map_err(|err| EngineError::Io(format!("{}: {err}", path.display())))
 }
 
 /// Is there a file at `path` the automation read root lets us see? A path outside the root is
@@ -1277,8 +1299,14 @@ fn save_session_bundle(e: &mut Engine, path: &str) -> Result<usize> {
 /// [`open_session`].
 pub fn open_session_bytes(e: &mut Engine, name: &str, bytes: &[u8]) -> Result<Vec<String>> {
     let (text, mut files) = if bytes.starts_with(b"PK\x03\x04") {
+        if bytes.len() as u64 > MAX_BUNDLE_BYTES {
+            return Err(EngineError::Io(format!("{name}: bundle is too large")));
+        }
         read_bundle(bytes)?
     } else {
+        if bytes.len() as u64 > MAX_TEXT_FILE_BYTES {
+            return Err(EngineError::Io(format!("{name}: session metadata is too large")));
+        }
         (
             String::from_utf8(bytes.to_vec()).map_err(|_| EngineError::Io(format!("{name}: not a SoundCraft session")))?,
             std::collections::HashMap::new(),
@@ -1308,7 +1336,9 @@ pub fn open_session_bytes(e: &mut Engine, name: &str, bytes: &[u8]) -> Result<Ve
 
 /// Unpack a bundle: the one `.scraft` at its top level and the files beside it, by relative path.
 fn read_bundle(bytes: &[u8]) -> Result<(String, std::collections::HashMap<String, Vec<u8>>)> {
-    use std::io::Read as _;
+    if bytes.len() as u64 > MAX_BUNDLE_BYTES {
+        return Err(EngineError::Io("bundle: input is too large".into()));
+    }
     let zerr = |err: zip::result::ZipError| EngineError::Io(format!("bundle: {err}"));
     let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(zerr)?;
     if z.len() > MAX_BUNDLE_ENTRIES {
@@ -1326,7 +1356,9 @@ fn read_bundle(bytes: &[u8]) -> Result<(String, std::collections::HashMap<String
         if total > MAX_BUNDLE_BYTES {
             return Err(EngineError::Io("bundle: too large".into()));
         }
+        let capacity = usize::try_from(size).map_err(|_| EngineError::Io(format!("bundle: {rel}: entry is too large for this platform")))?;
         let mut data = Vec::new();
+        data.try_reserve_exact(capacity).map_err(|_| EngineError::Io(format!("bundle: {rel}: not enough memory for {size} bytes")))?;
         // The declared size is hostile too: never read past it.
         f.by_ref().take(size).read_to_end(&mut data).map_err(|err| EngineError::Io(format!("bundle: {rel}: {err}")))?;
         let is_session = !rel.contains('/') && Path::new(&rel).extension().and_then(|x| x.to_str()) == Some(soundcraft_model::SESSION_EXTENSION);
@@ -1446,6 +1478,26 @@ pub fn live_span(start: Samples, pass: Option<Samples>, punch: Option<Range>, le
     let origin = start.saturating_sub(pass.filter(|p| *p > 0).map_or(0, |p| len / p * p));
     let span = Range::new(start, origin.saturating_add(len));
     Some((origin, span.intersect(&punch.unwrap_or(span))?))
+}
+
+#[cfg(test)]
+mod read_tests {
+    use super::*;
+
+    #[test]
+    fn file_size_is_rejected_before_reading() {
+        let dir = std::env::temp_dir().join(format!("soundcraft-bounded-read-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("input.bin");
+        std::fs::write(&path, b"123456789").unwrap();
+
+        let error = read_file_limited(&path, 8).unwrap_err();
+        assert!(error.to_string().contains("file is too large"));
+        std::fs::write(&path, b"12345678").unwrap();
+        assert_eq!(read_file_limited(&path, 8).unwrap(), b"12345678");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[cfg(test)]
@@ -1631,10 +1683,9 @@ mod save_tests {
         open_session(&mut missing, &path("A/A.scraft")).unwrap();
         save_session(&mut missing, &path("B/Moved.scraft")).unwrap();
         let mut r = Engine::default();
-        assert_eq!(
-            open_session(&mut r, &path("B/Moved.scraft")).unwrap(),
-            vec![dir.join("A").join("Audio Files/Audio 1_02.wav").display().to_string()]
-        );
+        let missing = open_session(&mut r, &path("B/Moved.scraft")).unwrap();
+        assert_eq!(missing.len(), 1);
+        assert_eq!(std::path::Path::new(&missing[0]), dir.join("A").join("Audio Files").join("Audio 1_02.wav"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

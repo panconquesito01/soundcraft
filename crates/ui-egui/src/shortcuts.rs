@@ -71,7 +71,12 @@ pub fn handle(app: &mut SoundApp, ctx: &egui::Context) {
     });
     // Cmd and Ctrl are separate keys only on macOS (asked at runtime so the web build in a Mac browser agrees).
     let mac = ctx.os() == egui::os::OperatingSystem::Mac;
-    for (key, mods) in events {
+    for (key, mut mods) in events {
+        // Native and synthetic Windows/Linux integrations do not all populate egui's
+        // cross-platform `command` alias consistently. Treat a physical Ctrl press as Cmd there.
+        if !mac && mods.ctrl {
+            mods.command = true;
+        }
         if fixed(app, key, mods, mac) {
             continue;
         }
@@ -97,10 +102,61 @@ fn command_for(key: Key, mods: Modifiers, mac: bool) -> Option<&'static str> {
         .map(|c| c.id)
 }
 
+fn standard_clipboard_chord(m: Modifiers, mac: bool) -> bool {
+    m.command && !m.alt && !m.shift && (!mac || !m.ctrl)
+}
+
+/// An immediate Copy → Paste of selected clips should create a visible copy instead of pasting
+/// over the source range. Find the first range after the selection that is free on every selected
+/// track. Clicking elsewhere clears `selected_clips`, so an explicit insertion point still wins.
+fn free_clip_paste_target(app: &SoundApp) -> Option<(Vec<u64>, i64)> {
+    let s = app.engine.session();
+    if s.edit.selected_clips.is_empty() || app.engine.clipboard.tracks.is_empty() {
+        return None;
+    }
+    let tracks = s.edit.selected_tracks.clone();
+    if tracks.is_empty() {
+        return None;
+    }
+    let length = app.engine.clipboard.length.max(1);
+    let mut at = s.edit.selection.end;
+    let clip_count = tracks.iter().filter_map(|id| s.track(*id)).map(|track| track.clips().len()).sum::<usize>();
+    for _ in 0..=clip_count {
+        let candidate = soundcraft_time::Range::new(at, at.saturating_add(length));
+        let blocker_end = tracks
+            .iter()
+            .filter_map(|id| s.track(*id))
+            .flat_map(|track| track.clips())
+            .filter(|clip| clip.range().overlaps(&candidate))
+            .map(soundcraft_model::Clip::end)
+            .max();
+        match blocker_end {
+            Some(end) if end > at => at = end,
+            Some(_) => return None,
+            None => return Some((tracks.into_iter().map(|id| id.0).collect(), at)),
+        }
+    }
+    None
+}
+
 /// Keys with context-dependent meaning. Returns true when handled.
 fn fixed(app: &mut SoundApp, key: Key, m: Modifiers, mac: bool) -> bool {
     let plain = !m.command && !m.alt && !m.ctrl && !m.shift;
     match key {
+        Key::C | Key::X | Key::V | Key::D
+            if app.ui.show_midi_editor
+                && app.midi.keyboard_focus
+                && crate::midi_editor::target_clip(app).is_some()
+                && standard_clipboard_chord(m, mac) =>
+        {
+            crate::midi_editor::clipboard_shortcut(app, key);
+            true
+        }
+        Key::V if standard_clipboard_chord(m, mac) => {
+            let Some((tracks, at)) = free_clip_paste_target(app) else { return false };
+            let _ = app.run("edit.paste", json!({"tracks": tracks, "at": at}));
+            true
+        }
         Key::Space if !m.command && !m.alt => {
             let id = if m.shift { "transport.half_speed" } else { "transport.toggle" };
             let _ = app.run(id, json!({}));
@@ -132,6 +188,12 @@ fn fixed(app: &mut SoundApp, key: Key, m: Modifiers, mac: bool) -> bool {
             let _ = app.run("transport.record", json!({}));
             true
         }
+        // Commands Keyboard Focus. On Windows/Linux egui reports Ctrl as both `ctrl` and
+        // `command`; this intentionally takes Ctrl+Alt+1 before the clip-rating family.
+        Key::Num1 if m.ctrl && m.alt && ((!mac && m.command) || (mac && !m.command)) => {
+            let _ = app.run("options.keyboard_focus", json!({}));
+            true
+        }
         Key::F1 | Key::F2 | Key::F3 | Key::F4 if plain => {
             edit_mode_key(app, key);
             true
@@ -151,7 +213,12 @@ fn fixed(app: &mut SoundApp, key: Key, m: Modifiers, mac: bool) -> bool {
             true
         }
         Key::F5 | Key::F6 | Key::F7 | Key::F8 | Key::F9 | Key::F10 if plain => {
+            let ctx = app.docking_context.clone();
+            let held = |candidate| ctx.as_ref().is_some_and(|context| context.input(|input| input.key_down(candidate)));
+            let smart = matches!(key, Key::F6 | Key::F7) && held(if key == Key::F6 { Key::F7 } else { Key::F6 })
+                || matches!(key, Key::F7 | Key::F8) && held(if key == Key::F7 { Key::F8 } else { Key::F7 });
             let tool = match key {
+                _ if smart => "smart",
                 Key::F5 => "zoom",
                 Key::F6 => "trim",
                 Key::F7 => "selector",
@@ -160,6 +227,10 @@ fn fixed(app: &mut SoundApp, key: Key, m: Modifiers, mac: bool) -> bool {
                 _ => "pencil",
             };
             let _ = app.run("edit.tool", json!({"tool": tool}));
+            true
+        }
+        Key::Escape if plain && app.ui.window == MainWindow::Edit => {
+            cycle_tool(app);
             true
         }
         Key::Plus | Key::Minus if !m.command && app.ui.window == MainWindow::Edit => {
@@ -224,6 +295,14 @@ fn fixed(app: &mut SoundApp, key: Key, m: Modifiers, mac: bool) -> bool {
         }
         _ => false,
     }
+}
+
+fn cycle_tool(app: &mut SoundApp) {
+    use soundcraft_model::Tool;
+    let tools = [Tool::Zoom, Tool::Trim, Tool::Selector, Tool::Grabber, Tool::Scrubber, Tool::Pencil, Tool::Smart];
+    let current = app.engine.session().edit.tool;
+    let next = tools.iter().position(|tool| *tool == current).and_then(|index| tools.get((index + 1) % tools.len())).copied().unwrap_or(Tool::Smart);
+    let _ = app.run("edit.tool", json!({"tool": next.id()}));
 }
 
 /// F1–F4 (and Alt+1–4) choose Shuffle, Slip, Spot and Grid; F4 in Grid switches between Absolute and
@@ -416,8 +495,11 @@ mod label_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{command_for, mods_match, parse, search_chord};
+    use super::{command_for, fixed, mods_match, parse, search_chord};
+    use crate::{Services, SoundApp};
     use egui::{Key, Modifiers};
+    use serde_json::json;
+    use soundcraft_model::{ChannelFormat, ClipId, TrackKind};
 
     /// Ctrl held on Windows or Linux, as egui reports it.
     const PC_CTRL: Modifiers = Modifiers { ctrl: true, command: true, ..Modifiers::NONE };
@@ -453,5 +535,62 @@ mod tests {
         assert_eq!(command_for(Key::K, Modifiers { shift: true, ..MAC_CMD }, true), Some("file.export_clips"));
         assert_eq!(command_for(Key::K, Modifiers { shift: true, ..PC_CTRL }, false), Some("file.export_clips"));
         assert!(crate::dialogs::takes_path("file.export_clips"));
+    }
+
+    #[test]
+    fn piano_roll_focus_routes_standard_copy_to_midi_notes() {
+        let mut engine = soundcraft_engine::Engine::default();
+        let track = engine.session_mut().add_track(TrackKind::Instrument, ChannelFormat::Stereo, Some("Keys"));
+        let clip = engine.execute("midi.new_clip", &json!({"track": track.0})).unwrap()["clip"].as_u64().unwrap();
+        engine.execute("midi.note_add", &json!({"clip": clip, "pitch": 60, "start_ticks": 0})).unwrap();
+        engine.session_mut().edit.selected_clips = vec![ClipId(clip)];
+        let mut app = SoundApp::new(engine, None, Services::default());
+        app.ui.show_midi_editor = true;
+        app.midi.keyboard_focus = true;
+        app.midi.selected = vec![0];
+
+        assert!(fixed(&mut app, Key::C, PC_CTRL, false));
+        assert_eq!(app.engine.clipboard.midi_notes.len(), 1);
+        // Pointer hover is irrelevant once the editor owns keyboard focus.
+        app.midi.hovered = false;
+        assert!(fixed(&mut app, Key::C, PC_CTRL, false));
+        app.midi.keyboard_focus = false;
+        assert!(!fixed(&mut app, Key::C, PC_CTRL, false));
+    }
+
+    #[test]
+    fn ctrl_alt_one_toggles_commands_focus_before_clip_ratings() {
+        let mut app = SoundApp::new(soundcraft_engine::Engine::default(), None, Services::default());
+        let mods = Modifiers { alt: true, ..PC_CTRL };
+        let before = app.engine.session().edit.keyboard_focus.clone();
+
+        assert!(fixed(&mut app, Key::Num1, mods, false));
+        assert_ne!(app.engine.session().edit.keyboard_focus, before);
+        assert!(fixed(&mut app, Key::Num1, mods, false));
+        assert_eq!(app.engine.session().edit.keyboard_focus, before);
+    }
+
+    #[test]
+    fn escape_cycles_edit_tools() {
+        let mut app = SoundApp::new(soundcraft_engine::Engine::default(), None, Services::default());
+        app.engine.session_mut().edit.tool = soundcraft_model::Tool::Zoom;
+
+        assert!(fixed(&mut app, Key::Escape, Modifiers::NONE, false));
+        assert_eq!(app.engine.session().edit.tool, soundcraft_model::Tool::Trim);
+    }
+
+    #[test]
+    fn requested_track_shortcuts_are_registered() {
+        for (id, shortcut) in [
+            ("track.save_preset", "Alt+Shift+P"),
+            ("track.bypass_eq", "Shift+E"),
+            ("track.bypass_dynamics", "Shift+C"),
+            ("track.bypass_reverb", "Shift+V"),
+            ("track.bypass_delay", "Shift+D"),
+        ] {
+            let actual = soundcraft_engine::command_specs().iter().find(|spec| spec.id == id).and_then(|spec| spec.shortcut);
+            assert_eq!(actual, Some(shortcut), "wrong shortcut for {id}");
+        }
+        assert!(crate::menus::UI_COMMANDS.iter().any(|command| command.0 == "window.dashboard" && command.3 == Some("Cmd+Alt+O")));
     }
 }

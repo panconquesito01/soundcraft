@@ -45,3 +45,24 @@ fn interface_scale_slider_follows_the_pointer() {
     assert_eq!(h.state().extra.ui_scale, 1.5);
     assert_eq!(h.ctx.zoom_factor(), 1.5);
 }
+
+#[test]
+fn changing_language_keeps_the_languages_and_themes_window_stationary() {
+    let mut app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default());
+    app.extra.show_ui_customization = true;
+    let mut h = Harness::builder().with_size(WINDOW_PX).with_pixels_per_point(1.0).build_ui_state(
+        |ui, app: &mut SoundApp| {
+            let ctx = ui.ctx().clone();
+            app.logic(&ctx);
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(6);
+    let id = egui::Id::new("languages_and_themes_window");
+    let before = h.ctx.memory(|memory| memory.area_rect(id)).unwrap();
+    h.state_mut().ui.language = soundcraft_ui_egui::i18n::Language::Spanish;
+    h.step();
+    let after = h.ctx.memory(|memory| memory.area_rect(id)).unwrap();
+    assert_eq!(before.min, after.min);
+}

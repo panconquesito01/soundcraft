@@ -10,6 +10,7 @@ use soundcraft_playback::devices::{AudioSystem, DeviceInfo};
 use std::sync::Arc;
 
 pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
+    dashboard(app, ctx);
     audio_health(app, ctx);
     automation(app, ctx);
     color_palette(app, ctx);
@@ -25,6 +26,42 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
     io_setup(app, ctx);
     shortcuts_window(app, ctx);
     clip_effects(app, ctx);
+}
+
+fn dashboard(app: &mut SoundApp, ctx: &egui::Context) {
+    let mut open = app.ui.show_dashboard;
+    if !open {
+        return;
+    }
+    let language = app.ui.language;
+    let tr = |source| crate::i18n::text(language, source);
+    egui::Window::new(format!("SoundCraft — {}", tr("Dashboard"))).open(&mut open).default_size(vec2(520.0, 360.0)).resizable(true).show(ctx, |ui| {
+        ui.heading(tr("Start a session"));
+        ui.horizontal(|ui| {
+            if ui.button(tr("New Session…")).clicked() && !crate::dialogs::ask_to_save(app, "session.new", &json!({})) {
+                let _ = app.dialogs.open_for_command(&app.engine, "session.new");
+            }
+            if ui.button(tr("Open Session…")).clicked() && !crate::dialogs::ask_to_save(app, "session.open", &json!({})) {
+                let _ = app.dialogs.open_for_command(&app.engine, "session.open");
+            }
+        });
+        ui.separator();
+        ui.heading(tr("Recent sessions"));
+        let recent = app.ui.recent_sessions.clone();
+        if recent.is_empty() {
+            ui.label(tr("No recent sessions yet."));
+        } else {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for path in recent {
+                    let label = std::path::Path::new(&path).file_name().map_or_else(|| path.clone(), |name| name.to_string_lossy().into_owned());
+                    if ui.button(label).on_hover_text(&path).clicked() && !crate::dialogs::ask_to_save(app, "session.open", &json!({"path": path})) {
+                        let _ = app.run("session.open", json!({"path": path}));
+                    }
+                }
+            });
+        }
+    });
+    app.ui.show_dashboard = open;
 }
 
 fn audio_health(app: &mut SoundApp, ctx: &egui::Context) {

@@ -46,6 +46,35 @@ pub type Run = fn(&mut Engine, &Value) -> Result<Value>;
 /// `Err(reason)` = disabled.
 pub type Enabled = fn(&Engine) -> std::result::Result<(), String>;
 
+/// How much end-to-end behaviour has been verified for a registered command.
+///
+/// Registration proves breadth only: it does not prove that the command performs the complete
+/// musical operation implied by its label. Commands default to [`Self::NotVerified`] until code,
+/// tests or a reproducible manual check support a stronger classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityStatus {
+    Complete,
+    Limited,
+    Partial,
+    UiOnly,
+    Unsupported,
+    NotVerified,
+}
+
+impl CapabilityStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Complete => "complete",
+            Self::Limited => "limited",
+            Self::Partial => "partial",
+            Self::UiOnly => "ui_only",
+            Self::Unsupported => "unsupported",
+            Self::NotVerified => "not_verified",
+        }
+    }
+}
+
 /// A registered command.
 pub struct CommandSpec {
     pub id: &'static str,
@@ -61,6 +90,9 @@ pub struct CommandSpec {
     pub undoable: bool,
     /// Only touches `edit.zoom`, through `Engine::zoom_mut`.
     pub view: bool,
+    pub status: CapabilityStatus,
+    /// Repository location or concise reason supporting `status`.
+    pub evidence: Option<&'static str>,
 }
 
 /// Serializable description of a command.
@@ -73,6 +105,8 @@ pub struct CommandInfo {
     pub params: String,
     pub enabled: bool,
     pub disabled_reason: Option<String>,
+    pub status: CapabilityStatus,
+    pub evidence: Option<String>,
 }
 
 impl CommandSpec {
@@ -86,7 +120,38 @@ impl CommandSpec {
             params: self.params.into(),
             enabled: en.is_ok(),
             disabled_reason: en.err(),
+            status: self.status,
+            evidence: self.evidence.map(str::to_string),
         }
+    }
+}
+
+/// Audited exceptions to the conservative `not_verified` default.
+///
+/// Keep this table small and evidence-backed. A future audit can promote commands in batches;
+/// adding an entry must never be used as a substitute for implementing or testing a command.
+pub fn capability(id: &str) -> (CapabilityStatus, Option<&'static str>) {
+    use CapabilityStatus::{Complete, Partial, Unsupported};
+    match id {
+        "midi.notes_copy" | "midi.notes_cut" | "midi.notes_paste" | "midi.notes_duplicate" => {
+            (Complete, Some("crates/engine/src/cmd/midi.rs: command-level implementation with boundary and undo regression tests"))
+        }
+        "track.freeze" => (Partial, Some("crates/engine/src/cmd/track.rs: legacy frozen tracks can be unfrozen; creating a freeze is disabled")),
+        "event.renumber_bars" => (Unsupported, Some("crates/engine/src/cmd/event.rs: disabled until a bar-number map exists")),
+        "options.destructive_punch" => {
+            (Partial, Some("crates/engine/src/cmd/setup_more.rs: stores a flag; destructive recording behaviour is not connected"))
+        }
+        "options.midi_thru" | "options.midi_live_mode" => {
+            (Partial, Some("crates/engine/src/cmd/setup_more.rs: stores a flag; no physical MIDI device layer exists"))
+        }
+        "options.low_latency_monitoring" => (Partial, Some("crates/engine/src/cmd/setup_more.rs: stores a flag; playback does not consume it")),
+        "setup.midi_studio" | "setup.midi_beat_clock" | "setup.midi_input_filter" | "setup.midi_input_devices" => {
+            (Partial, Some("crates/engine/src/cmd/setup_more.rs: persists settings; no physical MIDI device layer exists"))
+        }
+        "setup.transcription_settings" => {
+            (Partial, Some("crates/engine/src/cmd/setup_more.rs: persists settings; transcription processing is not implemented"))
+        }
+        _ => (CapabilityStatus::NotVerified, None),
     }
 }
 
@@ -97,7 +162,23 @@ macro_rules! cmd {
     (noundo $($t:tt)*) => { $crate::cmd!(@spec true, false, false; $($t)*) };
     (view $($t:tt)*) => { $crate::cmd!(@spec false, false, true; $($t)*) };
     (@spec $journal:literal, $undoable:literal, $view:literal; $id:literal, $label:literal, [$($m:literal),*], $sc:expr, $params:literal, $en:expr, $run:expr) => {
-        $crate::cmd::CommandSpec { id: $id, label: $label, menu: &[$($m),*], shortcut: $sc, params: $params, enabled: $en, run: $run, journal: $journal, undoable: $undoable, view: $view }
+        {
+            let (status, evidence) = $crate::cmd::capability($id);
+            $crate::cmd::CommandSpec {
+                id: $id,
+                label: $label,
+                menu: &[$($m),*],
+                shortcut: $sc,
+                params: $params,
+                enabled: $en,
+                run: $run,
+                journal: $journal,
+                undoable: $undoable,
+                view: $view,
+                status,
+                evidence,
+            }
+        }
     };
     ($id:literal, $($t:tt)*) => { $crate::cmd!(@spec true, true, false; $id, $($t)*) };
 }
@@ -340,6 +421,30 @@ mod tests {
             assert!(c.id.contains('.'), "ids are namespaced: {}", c.id);
         }
         assert!(command_specs().len() > 150, "only {} commands", command_specs().len());
+    }
+
+    #[test]
+    fn shallow_commands_are_not_reported_as_complete() {
+        let expected = [
+            ("track.freeze", CapabilityStatus::Partial),
+            ("event.renumber_bars", CapabilityStatus::Unsupported),
+            ("setup.midi_studio", CapabilityStatus::Partial),
+            ("setup.midi_beat_clock", CapabilityStatus::Partial),
+            ("setup.transcription_settings", CapabilityStatus::Partial),
+        ];
+        for (id, status) in expected {
+            let command = find_command(id).unwrap_or_else(|| panic!("missing command {id}"));
+            assert_eq!(command.status, status, "{id}");
+            assert!(command.evidence.is_some(), "{id} needs evidence");
+        }
+    }
+
+    #[test]
+    fn command_info_serializes_the_audited_status() {
+        let command = find_command("event.renumber_bars").unwrap_or_else(|| panic!("missing command"));
+        let value = serde_json::to_value(command.info(&Engine::default())).unwrap_or_default();
+        assert_eq!(value["status"], "unsupported");
+        assert!(value["evidence"].as_str().is_some_and(|s| s.contains("event.rs")));
     }
 
     #[test]

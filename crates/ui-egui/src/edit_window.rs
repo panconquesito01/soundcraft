@@ -1944,15 +1944,21 @@ fn lane_interaction(app: &mut SoundApp, ui: &mut Ui, track: &Track, lane: Rect, 
     // The clip is remembered at the right-click so the menu keeps its target while it is used.
     let menu_clip_id = id.with("menu_clip");
     if resp.secondary_clicked() {
-        let clip = resp.interact_pointer_pos().and_then(|p| {
+        let target = resp.interact_pointer_pos().map(|p| {
             let s = app.engine.session();
-            clip_at(track, sample_at(s, tl, p.x).max(0)).map(|c| c.id)
+            let at = sample_at(s, tl, p.x).max(0);
+            ClipMenuTarget { clip: clip_at(track, at).map(|c| c.id), track: track.id, at }
         });
-        ui.ctx().data_mut(|d| d.insert_temp(menu_clip_id, clip));
+        ui.ctx().data_mut(|d| d.insert_temp(menu_clip_id, target));
     }
     // The clip may have been removed or moved since the right-click; only use it if it still exists.
-    let menu_clip = ui.ctx().data(|d| d.get_temp::<Option<ClipId>>(menu_clip_id)).flatten().filter(|c| track.clips().iter().any(|x| x.id == *c));
-    resp.context_menu(|ui| clip_context_menu(app, ui, menu_clip));
+    let menu_target = ui.ctx().data(|d| d.get_temp::<Option<ClipMenuTarget>>(menu_clip_id)).flatten().map(|mut target| {
+        if target.clip.is_some_and(|clip| !track.clips().iter().any(|candidate| candidate.id == clip)) {
+            target.clip = None;
+        }
+        target
+    });
+    resp.context_menu(|ui| clip_context_menu(app, ui, menu_target));
     // Audio files dropped from the Clip List.
     if let Some(src) = resp.dnd_release_payload::<crate::DragSource>()
         && let Some(p) = ui.ctx().pointer_latest_pos()
@@ -2521,14 +2527,38 @@ fn new_midi_clip(app: &mut SoundApp, s: &Session, track: TrackId, from: Samples,
     }
 }
 
-fn clip_context_menu(app: &mut SoundApp, ui: &mut Ui, clip: Option<ClipId>) {
-    let Some(c) = clip else {
-        if ui.button("Paste").clicked() {
-            let _ = app.run("edit.paste", json!({}));
-        }
+#[derive(Clone, Copy)]
+struct ClipMenuTarget {
+    clip: Option<ClipId>,
+    track: TrackId,
+    at: Samples,
+}
+
+fn select_clip_and_run(app: &mut SoundApp, clip: ClipId, command: &str) {
+    if app.run("edit.select", json!({"clips": [clip.0]})).is_ok() {
+        let _ = app.run(command, json!({}));
+    }
+}
+
+fn clip_context_menu(app: &mut SoundApp, ui: &mut Ui, target: Option<ClipMenuTarget>) {
+    let Some(target) = target else { return };
+    let can_paste = !app.engine.clipboard.tracks.is_empty();
+    if ui.add_enabled(can_paste, egui::Button::new("Paste Here")).clicked() {
+        let _ = app.run("edit.paste", json!({"tracks": [target.track.0], "at": target.at}));
+        ui.close();
+    }
+    let Some(c) = target.clip else {
         return;
     };
     let ids = json!([c.0]);
+    ui.separator();
+    for (label, cmd) in [("Cut Clip", "edit.cut"), ("Copy Clip", "edit.copy"), ("Duplicate Clip", "edit.duplicate")] {
+        if ui.button(label).clicked() {
+            select_clip_and_run(app, c, cmd);
+            ui.close();
+        }
+    }
+    ui.separator();
     for (label, cmd) in [
         ("Mute/Unmute", "edit.mute_clips"),
         ("Edit Lock/Unlock", "clip.edit_lock"),
@@ -2540,16 +2570,19 @@ fn clip_context_menu(app: &mut SoundApp, ui: &mut Ui, clip: Option<ClipId>) {
     ] {
         if ui.button(label).clicked() {
             let _ = app.run(cmd, json!({"clips": ids}));
+            ui.close();
         }
     }
     ui.separator();
     if ui.button("Rename...").clicked() {
         let name = app.engine.session().find_clip(c).map(|(_, x)| x.name.clone()).unwrap_or_default();
         app.dialogs.open_rename_clip(c, &name);
+        ui.close();
     }
     if ui.button("Delete").clicked() {
         let _ = app.run("edit.select", json!({"clips": ids}));
         let _ = app.run("edit.clear", json!({}));
+        ui.close();
     }
 }
 

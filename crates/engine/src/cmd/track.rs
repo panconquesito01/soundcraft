@@ -85,13 +85,15 @@ pub fn specs() -> Vec<CommandSpec> {
         )),
         cmd!("track.pin", "Pin Track", [], None, "{tracks?}", has_selection, |e, p| flag(e, p, "track.pin", |t, v| t.pinned = v, |t| t.pinned)),
         cmd!("track.move", "Move Track", [], None, "{track, to: index}", has_tracks, move_track),
-        cmd!("track.freeze", "Freeze", ["Track"], None, "{tracks?}", has_selection, |e, p| flag(
-            e,
-            p,
+        cmd!(
             "track.freeze",
-            |t, v| t.frozen = v,
-            |t| t.frozen
-        )),
+            "Freeze",
+            ["Track"],
+            None,
+            "{tracks?} — unfreeze is supported; rendering a new freeze is not yet implemented",
+            freeze_enabled,
+            unfreeze
+        ),
         cmd!("track.commit", "Commit...", ["Track"], Some("Alt+Shift+C"), "{tracks?}", has_selection, commit),
         cmd!("track.bounce", "Bounce...", ["Track"], Some("Cmd+Alt+Shift+B"), "{tracks?}", has_selection, commit),
         cmd!("track.bypass_inserts", "All", ["Track", "Bypass Inserts"], None, "{tracks?, bypass?: bool}", has_selection, bypass_inserts),
@@ -410,6 +412,33 @@ fn flag(
         }
     }
     Ok(json!({"value": target, "tracks": tracks}))
+}
+
+fn freeze_enabled(e: &Engine) -> std::result::Result<(), String> {
+    let tracks = e.target_tracks();
+    if tracks.iter().any(|id| e.session().track(*id).is_some_and(|track| track.frozen)) {
+        Ok(())
+    } else {
+        Err("track freeze rendering is not implemented; Commit is available for destructive rendering".into())
+    }
+}
+
+fn unfreeze(e: &mut Engine, p: &Value) -> Result<Value> {
+    let tracks = tracks_required(e, "track.freeze", p)?;
+    if !tracks.iter().any(|id| e.session().track(*id).is_some_and(|track| track.frozen)) {
+        return Err(EngineError::Unsupported("track freeze rendering is not implemented; use track.commit for a rendered copy".into()));
+    }
+    let s = e.session_mut();
+    let mut changed = 0usize;
+    for id in &tracks {
+        if let Some(track) = s.track_mut(*id)
+            && track.frozen
+        {
+            track.frozen = false;
+            changed += 1;
+        }
+    }
+    Ok(json!({"frozen": false, "tracks": changed}))
 }
 
 /// A routing folder owns its summing bus; never reuse a user bus with the same name.
@@ -855,6 +884,20 @@ fn route(e: &mut Engine, p: &Value, input: bool) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn freeze_does_not_claim_success_without_a_render() {
+        let mut e = crate::demo::demo_engine();
+        let kick = e.session().track_by_name("Kick").map(|track| track.id).unwrap();
+        let err = e.execute("track.freeze", &json!({"tracks": [kick.0]})).unwrap_err();
+        assert!(matches!(err, EngineError::Unsupported(_)));
+        assert!(!e.session().track(kick).is_some_and(|track| track.frozen));
+
+        e.session_mut().track_mut(kick).unwrap().frozen = true;
+        let result = e.execute("track.freeze", &json!({"tracks": [kick.0]})).unwrap();
+        assert_eq!(result["frozen"], false);
+        assert!(!e.session().track(kick).is_some_and(|track| track.frozen));
+    }
 
     #[test]
     fn comp_from_alternate_playlist() {

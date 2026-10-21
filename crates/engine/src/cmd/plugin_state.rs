@@ -18,6 +18,8 @@ pub fn specs() -> Vec<CommandSpec> {
         journal: false,
         undoable: false,
         view: false,
+        status: CapabilityStatus::NotVerified,
+        evidence: None,
     }]
 }
 

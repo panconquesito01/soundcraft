@@ -1,8 +1,8 @@
 # SoundCraft roadmap
 
-**Stage: pre-alpha** · next: alpha, ~5% and ~110–180 h away (the alpha gate's three failing workflows)
+**Stage: pre-alpha** · next: alpha, ~5% and ~85–150 h away (the alpha gate's three failing workflows)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (readiness by audience with hours to ~95 %) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-20 · **Last updated:** 2026-10-20 · **Change:** minor (Languages & Themes, accessible palettes, custom JSON and MIDI clipboard focus) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 SoundCraft is a clean-room, pure-Rust digital audio workstation that aims at full parity with
 Avid Pro Tools, and then beyond it: faster, open, scriptable and agent-controllable. This page is
@@ -20,7 +20,7 @@ menu checklist).
 | **Ready for real work** | **~40 %** | estimated, weighted by dimension |
 | Mainstream practitioner (tracking/mixing engineer) | **~36 %** | estimated: 50.6 % weekly-area depth × 0.90 interaction × 0.92 stability × 0.85 file exchange ([how](docs/target-app-parity.md#mainstream-practitioner-and-essentials-user)) |
 | Essentials user (song or podcast, defaults) | **~57 %** | estimated: 72.4 % core-feature depth × 0.90 launch/stability × 0.90 discoverability × 0.97 files ([how](docs/target-app-parity.md#mainstream-practitioner-and-essentials-user)) |
-| Remaining to alpha | **~110–180 Opus 5.5 agent-hours** (the failing gate rows) | estimated, calibrated on PR history |
+| Remaining to alpha | **~85–150 Opus 5.5 agent-hours** (the failing gate rows) | estimated, calibrated on PR history |
 | Remaining to beta | **~350–570 Opus 5.5 agent-hours** (includes the alpha work; ~60–70 % parallelizable) | estimated |
 | Remaining to full parity | **~950–1,450 Opus 5.5 agent-hours** | estimated |
 
@@ -34,10 +34,11 @@ Hours are Opus 5.5 agent wall-clock hours, calibrated on this repo's PRs; 60–7
 Detail: [target-app-parity.md](docs/target-app-parity.md#readiness-by-audience).
 
 **Why pre-alpha:** the core-workflow gate in [docs/roadmap.md](docs/roadmap.md#alpha-gate) fails.
-Editing, mixing, bouncing, and saving and reopening work end to end. But a Pro Tools user can't
-record from a chosen audio interface at a chosen buffer size (only the default devices, a fixed
-512-sample block, and takes held in RAM). They can't record MIDI from a keyboard (there is no
-MIDI device layer). And they can't bring a session in or hand one back (no AAF/OMF/`.ptx`).
+Editing, mixing, bouncing, and saving and reopening work end to end. But a Pro Tools user still
+cannot route chosen physical channels through one duplex clock or rely on measured record-latency
+compensation. Device, sample-rate and buffer selection exist and takes stream to WAV, but the mix
+still processes fixed 512-sample blocks. They cannot record MIDI from a keyboard (there is no MIDI
+device layer), or bring a session in or hand one back (no AAF/OMF/`.ptx`).
 Readiness (~40 %) sits right at the alpha bar, but a gate failure keeps the app pre-alpha. The
 2026-10-07 estimate ("~65 % overall, 110–150 h to 100 %") counted feature presence. This one
 measures readiness and adds hardware, localization and field bug reports.
@@ -50,7 +51,7 @@ measures readiness and adds hardware, localization and field bug reports.
 | UI/UX fidelity | ~55 % | 60–100 | [ui-parity.md](docs/ui-parity.md) |
 | File formats | ~40 % | 70–120 | [file-format-parity.md](docs/file-format-parity.md) |
 | Hardware (interfaces, MIDI, surfaces, sync) | ~12 % | 110–180 | [hardware-parity.md](docs/hardware-parity.md) |
-| Localization | ~12 % (1 of Pro Tools' 8 languages) | 70–110 | [localization-parity.md](docs/localization-parity.md) |
+| Localization | ~12 % overall; 7 selectable, 1 complete | 60–100 | [localization-parity.md](docs/localization-parity.md) |
 | Performance | ~35 % (unmeasured) | 40–70 | [hardware-parity.md](docs/hardware-parity.md#performance) |
 | Stability | ~45 % | 50–80 | [gaps.md](docs/gaps.md) |
 | Platforms | ~65 % (5 platforms built, macOS exercised) | 20–40 | [gaps.md](docs/gaps.md) |
@@ -85,29 +86,30 @@ Weights and evidence per row: [target-app-parity.md](docs/target-app-parity.md#f
 |---|---|---|---:|
 | English | en | full | 100 % |
 | Simplified Chinese | zh-Hans | none | 0 % |
-| Spanish | es | none (PR #143 open) | 0 % |
+| Spanish | es | partial core surface | initial |
 | Hindi | hi | none | 0 % |
 | Arabic | ar | none | 0 % |
-| French | fr | none (PR #143 open) | 0 % |
-| Portuguese | pt | none | 0 % |
+| French | fr | partial core surface | initial |
+| Portuguese | pt | partial core surface | initial |
 | Indonesian | id | none | 0 % |
-| Japanese | ja | none | 0 % |
-| German | de | none | 0 % |
+| Japanese | ja | partial core surface | initial |
+| German | de | partial core surface | initial |
+| Russian | ru | partial core surface | initial |
 | Korean | ko | none | 0 % |
 | Vietnamese | vi | none | 0 % |
 
-Other languages shipped: 0. Detail: [localization-parity.md](docs/localization-parity.md).
+Detail: [localization-parity.md](docs/localization-parity.md).
 
 ## Upcoming
 
 Ranked; the alpha gate, the alpha checklist and the beta plan are in [docs/roadmap.md](docs/roadmap.md).
 
-1. **Alpha blocker:** audio interfaces: device and buffer-size choice, duplex stream, ASIO; record to disk (G-01, G-06). 35–55 h.
+1. **Alpha blocker:** audio interfaces: physical-channel routing, one duplex clock and record-latency compensation (G-01). 15–25 h.
 2. **Alpha blocker:** MIDI devices: record from keyboards, play instruments live, output (G-02). 20–35 h.
 3. **Alpha blocker:** AAF/OMF import and export (G-03). 50–90 h.
 4. macOS plugin entitlement (#153), then AU editors (G-05). 1 h for the entitlement (needed for the mix row), then 15–25 h.
 5. Land the open bug-fix PRs and clear the correctness backlog (G-04). 15–25 h.
-6. PR CI running `cargo xtask ci` on three OSes (G-14). 5–10 h.
+6. Exercise and harden the new PR CI running `cargo xtask ci` on Linux, macOS and Windows; add runtime smoke tests (G-14).
 7. Fidelity harness against Pro Tools (G-07). 20–30 h.
 
 ## Robustness
@@ -122,6 +124,13 @@ mutated and truncated movies. Field reports from the first public week are track
 
 ## Progress log
 
+- **2026-10-20 (visible clipboard destinations):** Immediate Ctrl/Cmd+C then Ctrl/Cmd+V on a selected timeline clip now pastes into the first free interval after the selected range instead of invisibly stacking at the same start. In the focused Piano Roll, selected notes paste as one group into the next free musical bar, skip occupied bars, advance on repeated paste, and extend the MIDI clip when necessary; undo restores both notes and the former clip length. Real Windows Ctrl event tests cover both routes. No readiness percentage change.
+- **2026-10-20 (languages, themes and MIDI clipboard focus):** The former UI Customization panel is now Languages & Themes in both Window and Setup, retains a stable position while its translated title changes, and defaults to Studio Dark. Nord Studio, Dracula Studio and the original low-saturation Midnight Cyber palette join Studio Light/Dark and Follow System. A bounded, strict version-1 JSON importer validates semantic colors and WCAG text contrast before activation. Piano Roll keyboard focus is now explicit, so stale note selection no longer intercepts Ctrl/Cmd+C/X/V/D intended for timeline MIDI clips. No readiness percentage change.
+- **2026-10-18 (editing gestures):** Piano Roll Note Resizing now captures the note's right edge from the pointer press origin, snaps the dragged note end rather than its delta, preserves the selected group, and supports temporary `Alt` snap bypass; the resize remains one atomic engine command and one undo step. Holding secondary click while crossing notes erases the entire gesture with one undo. The clip context menu can copy/cut/duplicate the targeted clip and paste at the exact right-clicked track/time. Windows/Linux Ctrl input is normalized before contextual MIDI or clip clipboard dispatch. Focused engine and egui interaction regressions cover the gestures and real key events. No readiness percentage change.
+- **2026-10-17 (Piano Roll, shortcuts and languages):** The Piano Roll has explicit persistent height presets/slider in addition to its draggable divider, and right-click deletes exactly the note under the pointer through an undoable engine command. Dashboard, Commands Focus, Smart Tool/tool-cycle and track preset/bypass shortcuts were completed where real commands exist; unsupported half-speed recording, physical keypad transport and Commands Focus `H` remain explicit. A persisted seven-language selector and typed English-fallback catalog localize the main menu roots, Dashboard, Appearance and Piano Roll; desktop Japanese uses an installed system font fallback. Full catalog migration and native review remain. No readiness percentage change.
+- **2026-10-17 (adaptive narrow UI):** Below 1500 logical points the Edit toolbar keeps Stop, Play, Record and the current position fixed while secondary edit/navigation actions move into a `More` menu; below 720 points the application menu collapses before it can overlap the window title. Offscreen renders were inspected at 960×600, 480×300 logical points and 1600×900. Adaptive side-panel policy remains. No readiness percentage change.
+- **2026-10-17 (MIDI Editor productivity):** The Piano Roll now has a clip-relative viewport with cursor-centred horizontal zoom, vertical zoom, sideways scroll, middle-button pan and explicit −/Fit/+ controls. Keyboard labels can show roots or all 128 MIDI notes in English or Spanish with sharp/flat spelling; preferences persist without changing musical data. Contextual Cmd/Ctrl+C/X/V/D use bounded engine commands for relative note clipboard operations with atomic undo. A revision-cached interval index restricts render, hit-test, rubber-band and velocity work to horizontally visible notes, then filters visible pitch; exact-query regression covers 100k varied notes. Coordinate round trips, all note names, clipboard boundaries and UI preference serialization are covered by tests, and the result was checked in offscreen renders. Profiling thresholds remain. No readiness percentage change.
+- **2026-10-17:** added a three-OS PR CI definition, a generated command-capability inventory (breadth no longer implies verified depth), explicit disabling of placeholder Freeze/Renumber Bars behaviour, and bounded in-memory file reads; corrected stale recording/device documentation
 - **2026-10-13:** `mix.instrument` takes the built-in instrument's parameters in `params` (validated, clamped) and refuses any other field, so a synth setting written beside `plugin` is an error instead of being accepted and ignored (#265)
 - **2026-10-13:** A bounce of a bus that an aux returns onto lines up with the timeline: the aux insert's lookahead is compensated like the main mix's (it left the bus late and cut the end off), and tracks routed to that bus wait for it too (#246)
 - **2026-10-13:** Delay compensation covers the inserts of the master faders: a bounce of the main mix with a Maximizer on the master lines up with the same mix without it (it came out 71 samples late) (#351)
@@ -155,6 +164,10 @@ mutated and truncated movies. Field reports from the first public week are track
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-20 | minor | Renamed Languages & Themes panel, stabilized it across language changes, added accessible palettes/JSON import and explicit MIDI clipboard focus |
+| 2026-10-18 | minor | Multi-note right-edge resizing with snap bypass, continuous right-drag erase, and exact-position clip context copy/paste |
+| 2026-10-17 | minor | Adaptive narrow toolbar and main menu; essential transport remains fixed and secondary actions use overflow |
+| 2026-10-17 | minor | PR CI, command-depth inventory, bounded reads, corrected recording/device status, and MIDI Editor navigation/note labels/clipboard/visible-note index |
 | 2026-10-13 | trivial | Progress log: mix.instrument params, unknown fields refused (#265) |
 | 2026-10-13 | trivial | Progress log: bus bounce compensates aux returns (#246) |
 | 2026-10-13 | trivial | Progress log: master insert latency compensated (#351) |

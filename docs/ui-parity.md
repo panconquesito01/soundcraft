@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (drag across checkboxes, #399; waveforms preview fades during drag) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-20 · **Last updated:** 2026-10-20 · **Change:** minor (Languages & Themes and deterministic MIDI clipboard focus) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 How SoundCraft feels in the hands of a Pro Tools user: tools, modes, modifiers, shortcuts,
 windows, meters. Measured from `crates/model/src/session.rs` (tools, modes), the command
@@ -35,7 +35,7 @@ Legend: ✅ matches · 🟡 partial · ❌ missing.
 | Modifier gestures (Alt for all tracks, Shift-Alt for selected, Cmd-click fine faders, Ctrl-click defaults) | 🟡 | Main ones on faders and pan; not across every control |
 | Scroll/zoom: wheel, trackpad pinch | 🟡 | Anchored trackpad zoom in open PRs #112, #137 |
 | Drag and drop: Clip List → tracks, files → tracks | ✅ macOS/Windows; 🟡 Wayland (PR #150) | |
-| Context menus (clip, track name, ruler, Clip List) | 🟡 | Clip and track menus exist; depth lower than Pro Tools'; Clip List delete (#4) |
+| Context menus (clip, track name, ruler, Clip List) | 🟡 | Clip menu includes exact-target cut/copy/duplicate and Paste Here at the clicked track/time; depth remains lower than Pro Tools'; Clip List delete (#4) |
 | Drag across checkboxes to check or uncheck several | ✅ | #399; every checkbox, as in the other Craft apps |
 
 ## Windows and panels
@@ -44,20 +44,21 @@ Legend: ✅ matches · 🟡 partial · ❌ missing.
 |---|---|---|
 | Edit window: rulers, track headers, view columns, Clip List, Groups, Tracks list | ✅ | Track Pin (new in 2026.4) ✅ (`track.pin`) |
 | Mix window: strips, views (inserts, sends, I/O, comments, EQ curve, preamps, instruments, object) | ✅ | Narrow Mix ✅; Mix and Edit on screen at once (Window › Mix in Separate Window, its own native window) ✅; Delay Compensation view and HEAT missing |
-| MIDI Editor, Score Editor, Event List | 🟡 | Dock height bug fixed (#113); notation editing shallow |
-| Transport, Big Counter, Memory Locations, Automation, Video, Universe, Renderer, UI Customization | ✅ present | |
+| MIDI Editor, Score Editor, Event List | 🟡 | MIDI Editor has cursor-centred horizontal zoom, vertical zoom, pan, sideways scroll, English/Spanish key labels, explicitly focused note copy/cut/paste/duplicate, group right-edge duration resizing, continuous right-drag erase and a cached visible-note interval index verified against 100k-note linear queries; stale note selection no longer steals timeline MIDI clip shortcuts; audition and notation depth remain |
+| Transport, Big Counter, Memory Locations, Automation, Video, Universe, Renderer, Languages & Themes | ✅ present | Languages & Themes keeps a stable window identity across translations; old automation paths remain aliases |
 | Workspace / sound browser with previews | ❌ | G-16 |
 | I/O Setup | 🟡 | Busses and paths; no hardware channel matrix (G-01) |
 | Preferences | 🟡 | Many settings stored, fewer honoured |
 | Window configurations, Tile/Cascade | 🟡 | Configurations ✅; Tile/Cascade in PR #151 |
 | Plugin windows | 🟡 | Generic parameter sliders; Pro Tools plugins have bespoke GUIs (#138 asks for skeuomorphic design); multi-page plugin views (#6) |
 | Command palette (Search) | ✅ | Over every command |
+| Narrow-window toolbar and main menu | 🟡 | Stop/Play/Record and position remain fixed; secondary controls move to `More`; the main menu collapses before overlapping the title. Adaptive side-panel policy remains |
 
 ## Look and meters
 
 | Feature | Status | Notes |
 |---|---|---|
-| Dark theme close to Pro Tools' | ✅ | Light theme (#32) and live system appearance (#85) beyond Pro Tools |
+| Theme system | ✅ | Studio Dark default, Studio Light, live system appearance (#85), Nord Studio, Dracula Studio, Midnight Cyber and bounded/contrast-validated custom JSON themes |
 | Interface scaling | 🟡 | Slider in PR #147 |
 | Meter types and ballistics (peak, RMS, VU, K-scales, gain reduction) | 🟡 | Peak/RMS; meter type choice and GR meters partial |
 | Clip indicators, track colours, waveform views (peak/power/rectified/outlines) | ✅ | |
@@ -68,6 +69,13 @@ Legend: ✅ matches · 🟡 partial · ❌ missing.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-20 | minor | Made immediate clip paste visibly target the first free interval and selected-note paste target successive free musical bars, extending MIDI clips atomically when required |
+| 2026-10-20 | minor | Renamed and stabilized Languages & Themes, added three low-fatigue palettes plus validated JSON import, and made MIDI note/timeline clipboard focus deterministic |
+| 2026-10-18 | minor | Added press-origin group right-edge note resizing with end-to-grid snapping/selection retention, continuous secondary-drag erase, and keyboard/context-menu clip copy/paste |
+| 2026-10-17 | minor | Piano Roll height presets/slider persist through docking, right-click deletes one note with undo, and supported requested tool/track/Commands Focus shortcuts were completed |
+| 2026-10-17 | minor | Piano Roll render, hit-test, rubber-band and velocity work share a revision-cached visible-note query; exact-query regression covers 100k notes; profiling thresholds remain |
+| 2026-10-17 | minor | Adaptive toolbar and main menu verified offscreen at 960×600, 480×300 logical points (high-DPI equivalent) and 1600×900; side-panel adaptation remains |
+| 2026-10-17 | minor | MIDI Editor viewport/navigation, persistent English/Spanish sharp/flat key labels and note clipboard/duplicate commands; readiness estimate unchanged |
 | 2026-10-13 | minor | Drag across checkboxes (#399) |
 | 2026-10-13 | minor | Waveforms and fade curves share temporary envelopes during drag, without rebuilding media or editing the document before release. Readiness estimate unchanged |
 | 2026-10-13 | minor | Fade curves use bounded physical-pixel sampling; midpoint handles stay visible and inside the clip, with repeat-drag coverage after extreme bends. Readiness estimate unchanged |

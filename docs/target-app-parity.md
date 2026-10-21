@@ -1,6 +1,6 @@
 # Target-app parity: SoundCraft vs Avid Pro Tools
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (hours to ~95 % for each audience; full number confirmed as an additive weighted sum) · **Target:** Avid Pro Tools Ultimate 2026.4.1 (bundle 26.4.1.179, macOS)
+> **Last reviewed:** 2026-10-17 · **Last updated:** 2026-10-17 · **Change:** minor (corrected recording, device and CI evidence; readiness estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1 (bundle 26.4.1.179, macOS)
 
 The authoritative assessment of how close SoundCraft is to Pro Tools. [`ROADMAP.md`](../ROADMAP.md)
 summarizes it, [`gaps.md`](gaps.md) itemizes every shortfall, and the per-dimension docs go deeper:
@@ -19,7 +19,7 @@ summarizes it, [`gaps.md`](gaps.md) itemizes every shortfall, and the per-dimens
 | **Mainstream practitioner** (a working tracking/mixing engineer) | **~36 %** | estimated: written area weights and discounts ([below](#mainstream-practitioner-and-essentials-user)) |
 | **Essentials user** (making a song or podcast with the core features) | **~57 %** | estimated: written feature weights and discounts ([below](#mainstream-practitioner-and-essentials-user)) |
 | Stage | **pre-alpha** (core-workflow gate fails) | see [Stage](#stage) |
-| Remaining effort to alpha | **~110–180 Opus 5.5 agent-hours** | estimated: the failing gate rows |
+| Remaining effort to alpha | **~85–150 Opus 5.5 agent-hours** | estimated: the failing gate rows after correcting completed device/disk-recording work |
 | Remaining effort to beta | **~350–570 Opus 5.5 agent-hours** | estimated, calibrated (below) |
 | Remaining effort to full parity | **~950–1,450 Opus 5.5 agent-hours** | estimated, calibrated (below) |
 
@@ -64,7 +64,7 @@ size selection, no localization, and a macOS release that cannot load signed thi
 - **The code on origin/main (3bc2d92, 2026-10-10).** Read and counted with grep: ~70,900 lines of
   Rust; 524 `#[test]` functions plus proptest suites; ~350 macro-registered engine command ids;
   26 built-in processors and 2 instruments in `crates/dsp/src/plugins`; audio I/O in
-  `crates/audio-io`; device I/O in `crates/playback` (cpal default output and default input only);
+  `crates/audio-io`; device I/O and selection in `crates/playback` (cpal; separate input/output streams);
   no MIDI device crate (no `midir`/CoreMIDI anywhere); no string catalog.
 - **Users.** The 37 open and 21 closed GitHub issues, and the 42 merged and 29 open pull
   requests up to 2026-10-10, are the only field evidence. Nothing has been benchmarked against
@@ -82,9 +82,9 @@ post-production, tracking) can switch. "Ready" is depth, correctness and fidelit
 | Features | 45 % | **~45 %** | estimated | 520–810 | [area table](#feature-areas) | Menu breadth 94 % measured, but depth is thin: see the area table |
 | UI/UX fidelity | 10 % | **~55 %** | estimated | 60–100 | [ui-parity.md](ui-parity.md) | Edit/Mix windows, every menu, floating windows; open UX bugs #3 #5 #6 #7 #140 #144; shortcuts only recently right on Windows/Linux (#15, #41); generic plugin UIs |
 | File formats | 10 % | **~40 %** | estimated | 70–120 | [file-format-parity.md](file-format-parity.md) | WAV/BWF/RF64/AIFF/FLAC read+write, compressed formats read; no `.ptx`, AAF, OMF, ADM BWF, MP3/AAC export, video export |
-| Hardware | 10 % | **~12 %** | estimated | 110–180 | [hardware-parity.md](hardware-parity.md) | Default output and default input device only, fixed 512-sample block, no ASIO, no MIDI devices, no control surfaces, no sync |
+| Hardware | 10 % | **~12 %** | estimated | 110–180 | [hardware-parity.md](hardware-parity.md) | Device/input/rate/buffer selection and opt-in ASIO exist; no duplex clock, physical-channel map, MIDI devices, control surfaces or sync |
 | Stability | 10 % | **~45 %** | estimated | 50–80 | [gaps.md](gaps.md) | Never-crash rules and proptests (random edits, mutated sessions, hostile params); but ~25 open correctness bugs, a launch failure (#142), an X11 llvmpipe failure (#107) |
-| Performance | 5 % | **~35 %** | estimated (unmeasured) | 40–70 | [hardware-parity.md](hardware-parity.md) | Parallel strip rendering and PDC exist; whole files decoded into RAM, recording into RAM (#84 open), no track-count or latency benchmarks |
+| Performance | 5 % | **~35 %** | estimated (unmeasured) | 40–70 | [hardware-parity.md](hardware-parity.md) | Parallel strip rendering, PDC and disk-streamed recording exist; playback sources decode wholly into RAM and no track-count or latency benchmarks exist |
 | Ecosystem / plugins | 4 % | **~30 %** | estimated | in Features + Hardware | [plugin-parity.md](plugin-parity.md) | CLAP/VST3/AU hosting; no AAX (Pro Tools' only format), no ARA, no sidechain, no control-surface ecosystem, no content library |
 | Platforms | 3 % | **~65 %** | estimated | 20–40 | [ROADMAP.md](../ROADMAP.md) | Builds for macOS, Windows x64/x86/arm64, Linux, FreeBSD, Web (Pro Tools: macOS, Windows), but only macOS is exercised at runtime; Web lacks file pickers (#63, #64) |
 | Localization | 2 % | **~12 %** | measured (catalog count) | 70–110 | [localization-parity.md](localization-parity.md) | English only, no string catalog; Pro Tools ships 8 UI languages; FR/ES PR #143 open |
@@ -199,16 +199,17 @@ Weights by what Pro Tools users actually spend time on. **Breadth** = the featur
 ([`roadmap.md`](roadmap.md#alpha-gate)) fails three of six Pro Tools workflows on macOS, the main
 platform:
 
-- Tracking from a chosen interface at a chosen buffer size: **no**. Only the default devices are
-  used, the mix runs in fixed 512-sample blocks, input and output are separate streams, and
-  takes are held in RAM.
+- Tracking from a chosen interface at a chosen buffer size: **no**. Device/input/rate/buffer
+  selection and disk-streamed takes exist, but the mix runs in fixed 512-sample blocks, input and
+  output use separate clocks, physical-channel mapping is incomplete, and record latency is not
+  compensated.
 - MIDI recording: **no**. There is no MIDI device layer.
 - Session interchange with Pro Tools or picture editors: **no**. No AAF/OMF/`.ptx`.
 
 Editing, mixing with plugins, bouncing, and saving and reopening pass (with known bugs).
 
-**Distance to alpha: ~5 points of readiness and ~110–180 agent-hours** (G-01, G-02, G-03, part
-of G-06, and the #153 entitlement). **Distance to beta: ~35 points and ~350–570 agent-hours**
+**Distance to alpha: ~5 points of readiness and ~85–150 agent-hours** (G-01, G-02, G-03 and
+the #153 entitlement). **Distance to beta: ~35 points and ~350–570 agent-hours**
 (beta also needs ~75 % ready). The beta plan is in [`roadmap.md`](roadmap.md).
 
 ## Effort and calibration
@@ -245,6 +246,7 @@ serializes more, because it needs hands-on testing.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-17 | minor | Corrected hardware/performance evidence for device selection and disk-streamed recording; estimates unchanged |
 | 2026-10-10 | minor | Readiness-by-audience table: hours to ~95 % for full (950–1,450 h), mainstream (380–600 h) and essentials (110–200 h). The full number is already the additive weighted sum over the written dimension table (40.6 %); method unchanged |
 | 2026-10-10 | minor | Added the mainstream-practitioner (~36 %) and essentials-user (~57 %) numbers with written weights, discounts and user evidence. Checked the full ~40 %: it is the written dimension weights × values (40.6 %), so it doesn't move |
 | 2026-10-10 | minor | Stage alpha → pre-alpha under the core-workflow gate; alpha distance ~110–180 h |

@@ -25,6 +25,18 @@ const BOLD: &[(&str, u32)] = &[
     ("/usr/local/share/fonts/dejavu/DejaVuSans-Bold.ttf", 0),
     ("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", 0),
 ];
+/// Japanese/CJK fallback. These are operating-system fonts loaded at runtime and are never
+/// redistributed. Face 0 of Noto Sans CJK is Japanese.
+const CJK_JAPANESE: &[(&str, u32)] = &[
+    ("/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc", 0),
+    ("/System/Library/Fonts/ヒラギノ角ゴシック W4.ttc", 0),
+    ("C:\\Windows\\Fonts\\YuGothR.ttc", 0),
+    ("C:\\Windows\\Fonts\\meiryo.ttc", 0),
+    ("C:\\Windows\\Fonts\\msgothic.ttc", 0),
+    ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 0),
+    ("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", 0),
+    ("/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc", 0),
+];
 /// Hangul fallback, appended after every family so Korean session, track and clip names draw
 /// whatever the interface language. The Noto Sans CJK collection's face 1 is its Korean face.
 const HANGUL: &[(&str, u32)] = &[
@@ -121,6 +133,12 @@ pub fn definitions() -> FontDefinitions {
         bold_family.insert(0, "system-regular".into());
     }
     fonts.families.insert(FontFamily::Name("bold".into()), bold_family);
+    if let Some(cjk) = load(CJK_JAPANESE, "sans-serif:lang=ja", Some("ja")) {
+        fonts.font_data.insert("system-cjk-japanese".into(), Arc::new(cjk));
+        for family in fonts.families.values_mut() {
+            family.push("system-cjk-japanese".into());
+        }
+    }
     if let Some(h) = load(HANGUL, "sans-serif:lang=ko", Some("ko")) {
         fonts.font_data.insert("system-hangul".into(), Arc::new(h));
         for family in fonts.families.values_mut() {
@@ -145,6 +163,33 @@ mod tests {
         }
         // Face 0 of the Noto Sans CJK collection is Japanese; the Korean face is 1.
         assert!(HANGUL.iter().filter(|(p, _)| p.ends_with("NotoSansCJK-Regular.ttc")).all(|(_, i)| *i == 1));
+    }
+
+    #[test]
+    fn japanese_candidates_cover_every_desktop_platform() {
+        for prefix in ["/System/Library/Fonts/", "C:\\Windows\\Fonts\\", "/usr/share/fonts/"] {
+            assert!(CJK_JAPANESE.iter().any(|(path, _)| path.starts_with(prefix)), "no Japanese candidate under {prefix}");
+        }
+        assert!(CJK_JAPANESE.iter().filter(|(path, _)| path.ends_with("NotoSansCJK-Regular.ttc")).all(|(_, index)| *index == 0));
+    }
+
+    /// Japanese labels draw in every family when the OS provides a matching font.
+    #[test]
+    fn every_family_draws_japanese_with_a_system_font() {
+        let defs = definitions();
+        if !defs.font_data.contains_key("system-cjk-japanese") {
+            eprintln!("skipping: no Japanese system font");
+            return;
+        }
+        let families: Vec<FontFamily> = defs.families.keys().cloned().collect();
+        let ctx = egui::Context::default();
+        ctx.set_fonts(defs);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        for family in families {
+            let font = egui::FontId::new(13.0, family.clone());
+            assert!(ctx.fonts_mut(|fonts| fonts.has_glyphs(&font, "日本語セッション")), "{family:?} has no Japanese glyphs");
+        }
     }
 
     /// Korean names draw in every family, not as boxes; skipped when the system has no Korean font.

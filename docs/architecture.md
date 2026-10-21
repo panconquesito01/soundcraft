@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** trivial (delay compensation includes the master faders' inserts (#351); previously minor: bounces stream to disk) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-17 · **Last updated:** 2026-10-17 · **Change:** minor (corrected device selection and disk-recording architecture) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 SoundCraft is a Cargo workspace of small crates with enforced layering (`cargo xtask layers`).
 Nothing below the UI knows about egui, so the interface can be replaced.
@@ -52,11 +52,13 @@ bounces offline (`RangeRender`, streamed to the file block by block) and realtim
 (`soundcraft_playback::Player`, which owns it on the audio thread and receives new session
 snapshots through a channel).
 
-Device I/O today is the system's *default* output and *default* input device, opened as two
-separate cpal streams; the mix renders 512-sample blocks and resamples to the device rate when
-they differ. There is no device or buffer-size selection, no ASIO, and no MIDI device layer yet
-(see [`hardware-parity.md`](hardware-parity.md)). Sources are decoded whole into the `SourcePool`
-and recordings are captured in memory until stop.
+Setup › Playback Engine selects the audio system, output and input device, sample rate and device
+buffer where the backend permits it; ASIO is available behind the opt-in `asio` feature. Input and
+output still use separate cpal streams, the mix renders fixed 512-sample blocks, and there is no
+physical-channel mapping, record-latency compensation or MIDI device layer yet (see
+[`hardware-parity.md`](hardware-parity.md)). Sources are decoded whole into the `SourcePool`.
+Recording callbacks write into a preallocated lock-free ring and a writer thread streams each take
+to WAV, refreshing its header every second for crash recovery.
 
 `soundcraft-video` holds our own H.264, ProRes and Motion JPEG decoders and the ISO-BMFF demuxer
 for the video track. Hosted plugins (`clap-host`, `vst3-host`, `au-host`) are scanned, created and
@@ -78,6 +80,7 @@ app as an MCP server. See `control-protocol.md` and `mcp.md`.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-17 | minor | Corrected device selection and disk recording; retained duplex/source-streaming limitations |
 | 2026-10-13 | trivial | delay compensation includes the master faders' inserts (#351) |
 | 2026-10-10 | minor | Added video, vst3-host and au-host to the layer diagram; documented device I/O limits and in-memory media |
 | 2026-10-05 | major | First architecture overview |

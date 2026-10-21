@@ -1,5 +1,5 @@
 //! Window menu extras: the Renderer (speaker layout of the main output with live levels and the
-//! object tracks' positions), UI Customization, and auto-updating the active window configuration.
+//! object tracks' positions), Languages & Themes, and auto-updating the active window configuration.
 
 use crate::SoundApp;
 use crate::theme::{Tokens, bold, regular};
@@ -150,39 +150,83 @@ fn ui_customization(app: &mut SoundApp, ctx: &egui::Context) {
     if !open {
         return;
     }
-    egui::Window::new(egui::RichText::new("Appearance").font(bold(13.0))).open(&mut open).default_size(vec2(320.0, 180.0)).resizable(false).show(
-        ctx,
-        |ui| {
+    let language = app.ui.language;
+    let tr = |source| crate::i18n::text(language, source);
+    // The translated title must not be the window identity: changing language would otherwise
+    // create a new egui area and visibly jump the modal back to its default position.
+    egui::Window::new(egui::RichText::new(tr("Languages & Themes")).font(bold(13.0)))
+        .id(egui::Id::new("languages_and_themes_window"))
+        .open(&mut open)
+        .default_size(vec2(430.0, 290.0))
+        .resizable(false)
+        .show(ctx, |ui| {
             egui::Grid::new("ui_custom").num_columns(2).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
-                ui.label("Interface scale");
+                ui.label(tr("Interface language"));
+                egui::ComboBox::from_id_salt("interface_language").selected_text(app.ui.language.native_name()).show_ui(ui, |ui| {
+                    for choice in crate::i18n::Language::ALL {
+                        ui.selectable_value(&mut app.ui.language, choice, choice.native_name());
+                    }
+                });
+                ui.end_row();
+                ui.label(tr("Interface scale"));
                 ui.add(egui::Slider::new(&mut app.extra.ui_scale, 0.75..=1.5).step_by(0.05).custom_formatter(|v, _| format!("{:.0} %", v * 100.0)));
                 ui.end_row();
-                ui.label("Reduce motion");
+                ui.label(tr("Reduce motion"));
                 crate::widgets::checkbox(ui, &mut app.extra.reduce_motion, "");
                 ui.end_row();
-                ui.label("Theme");
+                ui.label(tr("Theme"));
                 let mut chosen = None;
-                egui::ComboBox::from_id_salt("theme_mode").selected_text(app.ui.theme.label()).show_ui(ui, |ui| {
-                    for mode in crate::theme::ThemeMode::ALL {
-                        if ui.selectable_label(app.ui.theme == mode, mode.label()).clicked() {
+                let selected_theme = if app.ui.theme == crate::theme::ThemeMode::Custom {
+                    app.ui.custom_theme.as_ref().map_or_else(|| app.ui.theme.label().to_string(), |theme| theme.display_name().to_string())
+                } else {
+                    tr(app.ui.theme.label()).to_string()
+                };
+                egui::ComboBox::from_id_salt("theme_mode").selected_text(selected_theme).show_ui(ui, |ui| {
+                    for mode in crate::theme::ThemeMode::BUILT_INS {
+                        if ui.selectable_label(app.ui.theme == mode, tr(mode.label())).clicked() {
                             chosen = Some(mode);
                         }
+                    }
+                    if let Some(custom) = &app.ui.custom_theme
+                        && ui.selectable_label(app.ui.theme == crate::theme::ThemeMode::Custom, custom.display_name()).clicked()
+                    {
+                        chosen = Some(crate::theme::ThemeMode::Custom);
                     }
                 });
                 if let Some(mode) = chosen {
                     let _ = app.run("ui.theme", json!({"mode": mode.id()}));
                 }
                 ui.end_row();
-                ui.label("Auto-update configuration");
+                ui.label(tr("Custom theme"));
+                if ui.button(tr("Import JSON…")).clicked() {
+                    let picked = app.services.pick_open.as_ref().and_then(|pick| pick("ui.theme.import", &["json"]));
+                    if let Some(path) = picked {
+                        match crate::theme::load_custom_theme(std::path::Path::new(&path)) {
+                            Ok(theme) => {
+                                let name = theme.display_name().to_string();
+                                app.ui.custom_theme = Some(theme);
+                                app.ui.theme = crate::theme::ThemeMode::Custom;
+                                app.ui.status = format!("Imported theme: {name}");
+                            }
+                            Err(error) => app.ui.status = format!("Theme import failed: {error}"),
+                        }
+                    }
+                }
+                ui.end_row();
+                ui.label(tr("Auto-update configuration"));
                 crate::widgets::checkbox(ui, &mut app.extra.auto_update_config, "");
                 ui.end_row();
             });
-            if ui.button("Reset").clicked() {
+            ui.label(
+                egui::RichText::new(tr("JSON themes are validated for size, colors and readable text contrast."))
+                    .small()
+                    .color(Tokens::current().text_dim),
+            );
+            if ui.button(tr("Reset")).clicked() {
                 app.extra.ui_scale = 1.0;
                 app.extra.reduce_motion = false;
                 let _ = app.run("ui.theme", json!({"mode": crate::theme::ThemeMode::default().id()}));
             }
-        },
-    );
+        });
     app.extra.show_ui_customization = open;
 }

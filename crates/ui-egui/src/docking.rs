@@ -436,6 +436,12 @@ pub fn show(app: &mut crate::SoundApp, ui: &mut egui::Ui, window: crate::MainWin
     let _ = sync(&mut workspace, app, edit);
     publish_visibility(app, &workspace, edit);
     store(app, workspace, edit);
+    if edit
+        && let Some(height) = app.midi.panel_height_request.take()
+        && let Err(error) = resize_midi_panel(app, height)
+    {
+        app.ui.status = format!("MIDI Editor could not be resized: {error}");
+    }
     for action in output.actions {
         if let Err(error) = serde_json::to_value(action)
             .map_err(|error| error.to_string())
@@ -444,6 +450,48 @@ pub fn show(app: &mut crate::SoundApp, ui: &mut egui::Ui, window: crate::MainWin
             app.ui.status = format!("Panel move was not applied: {error}");
         }
     }
+}
+
+/// Apply the Piano Roll's explicit height control to whichever vertical split or floating group
+/// currently owns it. Free divider dragging remains handled by `craft-ui` itself.
+fn resize_midi_panel(app: &mut crate::SoundApp, height: f32) -> Result<(), String> {
+    let height = height.clamp(260.0, 1_000_000.0);
+    let previous = app.ui.docking.clone();
+    let mut next = previous.clone();
+    if let Some(group) = next.layout.floating.iter_mut().find(|group| group.panels.contains(&Panel::Midi)) {
+        group.rect[3] = height + MIDI_TAB_HEIGHT;
+    } else {
+        let Some(root) = &mut next.layout.root else { return Err("the Edit layout is empty".into()) };
+        if !resize_vertical_owner(root, Panel::Midi, height + MIDI_TAB_HEIGHT) {
+            return Err("the MIDI Editor is not in a resizable vertical split".into());
+        }
+    }
+    next.validate()?;
+    cancel_replaced_workspace(app, &previous, &next, true);
+    app.ui.docking = next;
+    Ok(())
+}
+
+fn node_contains(node: &Node<Panel>, panel: Panel) -> bool {
+    match node {
+        Node::Split { first, second, .. } => node_contains(first, panel) || node_contains(second, panel),
+        Node::Tabs { panels, .. } => panels.contains(&panel),
+        Node::Stack { entries } => entries.iter().any(|entry| entry.panel == panel),
+    }
+}
+
+fn resize_vertical_owner(node: &mut Node<Panel>, panel: Panel, height: f32) -> bool {
+    let Node::Split { axis, size, first, second } = node else { return false };
+    let in_first = node_contains(first, panel);
+    let in_second = node_contains(second, panel);
+    if *axis == SplitAxis::Vertical && in_first != in_second {
+        *size = if in_first { SplitSize::FixedFirst(height) } else { SplitSize::FixedSecond(height) };
+        return true;
+    }
+    if in_first && resize_vertical_owner(first, panel, height) {
+        return true;
+    }
+    in_second && resize_vertical_owner(second, panel, height)
 }
 
 /// Docking may make a specialist view smaller than its fixed tool/ruler geometry. Keep that

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "Midnight Ocean",
+  "appearance": "dark",
+  "colors": {
+    "background": "#0D151C",
+    "panel": "#16212B",
+    "surface": "#1D2C38",
+    "surface_hover": "#294052",
+    "border": "#496477",
+    "text": "#E6EDF3",
+    "text_muted": "#A9BBC7",
+    "accent": "#68B7C8",
+    "success": "#84B98A",
+    "warning": "#D2B36F",
+    "danger": "#D9787F"
+  }
+}

@@ -1,8 +1,48 @@
 const PITCH_CLASSES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
+const ENGLISH_SHARPS: [&str; 12] = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+const ENGLISH_FLATS: [&str; 12] = ["C", "D♭", "D", "E♭", "E", "F", "G♭", "G", "A♭", "A", "B♭", "B"];
+const SPANISH_SHARPS: [&str; 12] = ["Do", "Do♯", "Re", "Re♯", "Mi", "Fa", "Fa♯", "Sol", "Sol♯", "La", "La♯", "Si"];
+const SPANISH_FLATS: [&str; 12] = ["Do", "Re♭", "Re", "Mi♭", "Mi", "Fa", "Sol♭", "Sol", "La♭", "La", "Si♭", "Si"];
+
+/// Language used for pitch names. This is independent from the application's UI language.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NoteLanguage {
+    #[default]
+    English,
+    Spanish,
+}
+
+/// Enharmonic spelling for black keys. `Auto` currently preserves SoundCraft's sharp spelling;
+/// key-signature-aware spelling can promote it without changing stored MIDI pitches.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccidentalStyle {
+    #[default]
+    Sharps,
+    Flats,
+    Auto,
+}
+
 /// Note name using the Pro Tools convention where middle C (60) is "C3" (so 0 is "C-2").
 pub fn note_name(pitch: u8) -> String {
     let class = PITCH_CLASSES.get(usize::from(pitch % 12)).copied().unwrap_or("?");
+    let octave = i32::from(pitch / 12) - 2;
+    format!("{class}{octave}")
+}
+
+/// Localized note name using SoundCraft's octave convention (MIDI 60 = octave 3).
+///
+/// This function changes display only. The MIDI pitch remains the exact input value.
+pub fn note_name_with(pitch: u8, language: NoteLanguage, accidentals: AccidentalStyle) -> String {
+    let names = match (language, accidentals) {
+        (NoteLanguage::English, AccidentalStyle::Flats) => &ENGLISH_FLATS,
+        (NoteLanguage::Spanish, AccidentalStyle::Flats) => &SPANISH_FLATS,
+        (NoteLanguage::English, AccidentalStyle::Sharps | AccidentalStyle::Auto) => &ENGLISH_SHARPS,
+        (NoteLanguage::Spanish, AccidentalStyle::Sharps | AccidentalStyle::Auto) => &SPANISH_SHARPS,
+    };
+    let class = names.get(usize::from(pitch % 12)).copied().unwrap_or("?");
     let octave = i32::from(pitch / 12) - 2;
     format!("{class}{octave}")
 }
@@ -217,5 +257,26 @@ mod tests {
         assert_eq!(gm_program_name(0), "Acoustic Grand Piano");
         assert_eq!(gm_program_name(127), "Gunshot");
         assert_eq!(gm_program_name(200), "Unknown");
+    }
+
+    #[test]
+    fn localized_names_keep_every_midi_pitch_and_octave() {
+        assert_eq!(note_name_with(60, NoteLanguage::English, AccidentalStyle::Sharps), "C3");
+        assert_eq!(note_name_with(61, NoteLanguage::English, AccidentalStyle::Sharps), "C♯3");
+        assert_eq!(note_name_with(61, NoteLanguage::English, AccidentalStyle::Flats), "D♭3");
+        assert_eq!(note_name_with(60, NoteLanguage::Spanish, AccidentalStyle::Sharps), "Do3");
+        assert_eq!(note_name_with(61, NoteLanguage::Spanish, AccidentalStyle::Flats), "Re♭3");
+        assert_eq!(note_name_with(0, NoteLanguage::Spanish, AccidentalStyle::Auto), "Do-2");
+        assert_eq!(note_name_with(127, NoteLanguage::Spanish, AccidentalStyle::Auto), "Sol8");
+
+        for pitch in 0..=127u8 {
+            for language in [NoteLanguage::English, NoteLanguage::Spanish] {
+                for accidental in [AccidentalStyle::Sharps, AccidentalStyle::Flats, AccidentalStyle::Auto] {
+                    let name = note_name_with(pitch, language, accidental);
+                    assert!(!name.is_empty(), "pitch {pitch}");
+                    assert!(name.ends_with(&(i32::from(pitch / 12) - 2).to_string()), "pitch {pitch}: {name}");
+                }
+            }
+        }
     }
 }

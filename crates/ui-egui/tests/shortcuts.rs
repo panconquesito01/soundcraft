@@ -75,3 +75,37 @@ fn cmd_equals_toggles_mix_and_edit_without_zooming() {
         assert_eq!(ctx.zoom_factor(), 1.25, "{os:?}");
     }
 }
+
+#[test]
+fn windows_ctrl_only_runs_clip_copy_and_paste_shortcuts() {
+    let mut app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default());
+    let kick = app.engine.session().track_by_name("Kick").unwrap().clips()[0].id;
+    app.engine.execute("edit.select", &json!({"clips": [kick.0]})).unwrap();
+    let before = app.engine.session().track_by_name("Kick").unwrap().clips().len();
+    let ctx = egui::Context::default();
+    ctx.set_os(OperatingSystem::Windows);
+
+    press(&ctx, &mut app, Key::C, Modifiers::CTRL);
+    assert!(!app.engine.clipboard.tracks.is_empty());
+    press(&ctx, &mut app, Key::V, Modifiers::CTRL);
+    assert_eq!(app.engine.session().track_by_name("Kick").unwrap().clips().len(), before + 1);
+}
+
+#[test]
+fn stale_note_selection_does_not_steal_midi_clip_shortcuts_from_the_timeline() {
+    let mut app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default());
+    app.ui.show_midi_editor = true;
+    app.midi.selected = vec![0];
+    app.midi.keyboard_focus = false;
+    let keys = app.engine.session().track_by_name("Keys").unwrap().clips()[0].id;
+    app.engine.execute("edit.select", &json!({"clips": [keys.0]})).unwrap();
+    let before = app.engine.session().track_by_name("Keys").unwrap().clips().len();
+    let ctx = egui::Context::default();
+    ctx.set_os(OperatingSystem::Windows);
+
+    press(&ctx, &mut app, Key::C, Modifiers::CTRL);
+    assert!(!app.engine.clipboard.tracks.is_empty());
+    press(&ctx, &mut app, Key::V, Modifiers::CTRL);
+    assert_eq!(app.engine.session().track_by_name("Keys").unwrap().clips().len(), before + 1);
+    assert!(app.engine.session().edit.selected_clips.is_empty(), "the pasted range must replace the stale source-clip selection");
+}

@@ -1,6 +1,6 @@
 # Where SoundCraft falls short of Pro Tools
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (G-01: audio device settings and opt-in ASIO) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-20 · **Last updated:** 2026-10-20 · **Change:** minor (G-09 Languages & Themes UX; localization scope unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Every known shortfall, one entry each, ranked by how much it stops a Pro Tools user from doing
 real work in SoundCraft. This is the work list: pick from the top. Rows marked **alpha blocker**
@@ -20,15 +20,15 @@ When you close a gap, delete its entry (or shrink it) in the same PR, and bump t
 | G-03 | **Alpha blocker.** Cannot exchange sessions with Pro Tools (no AAF/OMF, no `.ptx`) | File formats | [file-format-parity.md](file-format-parity.md) | 50–90 |
 | G-04 | Open correctness bugs in features counted as done (~25 issues) | Stability | this file | 25–40 |
 | G-05 | (Entitlement part: alpha blocker for the mix row) Third-party VST3s blocked in the signed macOS build; AU editors missing | Ecosystem | [plugin-parity.md](plugin-parity.md) | 15–25 |
-| G-06 | (Record-to-disk part: alpha blocker for the tracking row) Sources decoded whole into RAM; recording into RAM | Performance | [hardware-parity.md](hardware-parity.md) | 15–25 |
+| G-06 | Sources are decoded whole into RAM; long-session disk streaming is missing (recording already streams takes to WAV) | Performance | [hardware-parity.md](hardware-parity.md) | 10–20 |
 | G-07 | Nothing is compared against Pro Tools' output (no fidelity harness) | Features | this file | 20–30 |
 | G-08 | Built-in plugin catalogue thin and unverified | Features | [plugin-parity.md](plugin-parity.md) | 80–120 |
-| G-09 | English only, no string catalog, no CJK/RTL rendering | Localization | [localization-parity.md](localization-parity.md) | 70–110 |
+| G-09 | English is the only complete language; initial seven-language catalog/selector exists, but most strings and web CJK/RTL remain | Localization | [localization-parity.md](localization-parity.md) | 60–100 |
 | G-10 | No control surfaces (HUI/MCU, EUCON) | Hardware | [hardware-parity.md](hardware-parity.md) | 40–70 |
 | G-11 | No external sync (MTC, LTC, MIDI clock, video reference) | Hardware | [hardware-parity.md](hardware-parity.md) | 15–25 |
 | G-12 | Immersive delivery: no Dolby Atmos/ADM BWF, MPEG-H, binaural | Features | [file-format-parity.md](file-format-parity.md) | 50–80 |
 | G-13 | Sidechain inputs, ARA, out-of-process plugin sandboxing | Ecosystem | [plugin-parity.md](plugin-parity.md) | 30–50 |
-| G-14 | Windows/Linux/Web exercised only lightly at runtime; no PR CI running the tests | Platforms / Stability | this file | 20–40 |
+| G-14 | Three-OS PR CI is defined but awaits its first hosted run; Windows/Linux/Web runtime smoke coverage remains light | Platforms / Stability | this file | 10–20 |
 | G-15 | Elastic Audio depth: one algorithm, no Elastic Pitch | Features | [target-app-parity.md](target-app-parity.md) | 30–45 |
 | G-16 | Session templates, track presets, workspace browser, batch rename | Features | [target-app-parity.md](target-app-parity.md) | 25–40 |
 | G-17 | Video: HEVC/DNx decode, video export, external timecode | Features / Formats | [file-format-parity.md](file-format-parity.md) | 30–50 |
@@ -100,11 +100,13 @@ launch #142; Linux #45, #107.
 
 ### G-06. Memory-bound media
 
-- **Missing:** streaming sources from disk; recording to disk. Every source is decoded whole into
-  the `SourcePool`; takes accumulate in RAM until stop (PR #84 open).
-- **Impact:** hour-long multitrack sessions and long takes exhaust memory; a crash during a long
-  take loses it.
-- **Estimate:** ≈ 15–25 h.
+- **Done:** the input callback feeds a preallocated lock-free ring and a writer thread streams each
+  take to WAV, updating its header every second. Long takes are not retained as raw PCM in RAM.
+- **Missing:** streaming playback sources from disk. Every imported/reopened source is decoded
+  whole into the `SourcePool`.
+- **Impact:** hour-long multitrack sessions can exhaust memory even though new recording itself is
+  streamed safely.
+- **Estimate:** ≈ 10–20 h.
 
 ### G-07. Fidelity harness against Pro Tools
 
@@ -123,9 +125,10 @@ parametric request #139. ≈ 80–120 h.
 
 ### G-09. Localization
 
-See [`localization-parity.md`](localization-parity.md): no catalog, every string literal in code;
-egui has no complex-script shaping or RTL; no CJK font fallback (PR #141 open). ≈ 70–110 h plus
-native-speaker review.
+See [`localization-parity.md`](localization-parity.md): a typed catalog, persistent seven-language
+selector, stable Languages & Themes panel and initial core translations now exist, with Japanese fallback from desktop system fonts.
+Most command labels/dialogs/tooltips are still English; external catalogs, pseudo-localization,
+web CJK, complex-script shaping and RTL remain. ≈ 60–100 h plus native-speaker review.
 
 ### G-10. Control surfaces
 
@@ -152,9 +155,9 @@ cannot be hosted (#109): Avid's AAX SDK licence and PACE signing; owner decision
 
 ### G-14. Platforms and CI
 
-Only `freebsd.yml` and `windows-arm64.yml` run on pull requests, and only for manifest paths;
-nothing runs `cargo xtask ci` on PRs. Windows and Linux have startup and rendering reports
-(#41, #45, #107, #142). ≈ 20–40 h (a PR CI matrix plus runtime smoke tests on three OSes).
+`.github/workflows/ci.yml` now defines `cargo xtask ci` on Linux, macOS and Windows for every PR;
+its first hosted run is still unverified. Windows and Linux retain startup and rendering reports
+(#41, #45, #107, #142), and runtime smoke tests are still missing. ≈ 10–20 h.
 
 ### G-15. Elastic Audio depth
 
@@ -199,6 +202,8 @@ missing. Out of scope unless the owner decides otherwise.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-20 | minor | G-09 selector moved to a stable Languages & Themes panel; full catalog, web CJK and RTL gaps remain unchanged |
+| 2026-10-17 | minor | G-06 corrected for disk recording; G-14 shrunk after adding three-OS PR CI definition |
 | 2026-10-12 | minor | G-01 shrunk: audio device, rate and buffer choice; opt-in ASIO |
 | 2026-10-10 | minor | Marked the alpha blockers (G-01, G-02, G-03; parts of G-05 and G-06) from the core-workflow gate |
 | 2026-10-10 | major | Created from the full re-measure against Pro Tools Ultimate 2026.4.1: 22 ranked gaps with evidence and estimates |

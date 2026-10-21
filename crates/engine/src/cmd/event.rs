@@ -78,7 +78,15 @@ pub fn specs() -> Vec<CommandSpec> {
             s.key_signatures.sort_by_key(|k| k.0);
             Ok(json!({}))
         }),
-        cmd!("event.renumber_bars", "Renumber Bars...", ["Event"], None, "{}", always, |_, _| Ok(json!({"note": "bars start at 1"}))),
+        cmd!(
+            "event.renumber_bars",
+            "Renumber Bars...",
+            ["Event"],
+            None,
+            "{} — not yet supported",
+            |_| Err("bar-number mapping is not implemented".into()),
+            |_, _| Err(EngineError::Unsupported("bar-number mapping is not implemented".into()))
+        ),
         cmd!("event.all_notes_off", "All MIDI Notes Off", ["Event"], Some("Cmd+Shift+."), "{}", always, |e, _| {
             e.transport_requests.push(crate::TransportRequest::AllNotesOff);
             Ok(json!({}))
@@ -388,8 +396,16 @@ fn step_marker(e: &mut Engine, dir: i64) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
+    use crate::EngineError;
     use crate::demo::demo_engine;
     use serde_json::json;
+
+    #[test]
+    fn renumber_bars_is_explicitly_disabled() {
+        let mut e = demo_engine();
+        let err = e.execute("event.renumber_bars", &json!({})).unwrap_err();
+        assert!(matches!(err, EngineError::Disabled(id, reason) if id == "event.renumber_bars" && reason.contains("not implemented")));
+    }
 
     /// The tempo-ruler dialog runs `event.tempo` with `bpm` and `at`; the change must land at that position.
     #[test]

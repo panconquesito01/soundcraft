@@ -348,6 +348,7 @@ fn paste(e: &mut Engine, p: &Value) -> Result<Value> {
         }
     }
     s.edit.selection = soundcraft_time::Range::new(at, at + cb.length);
+    s.edit.selected_clips.clear();
     Ok(json!({"pasted": pasted}))
 }
 

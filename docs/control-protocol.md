@@ -40,11 +40,11 @@ Errors: `{"id": 1, "ok": false, "error": "bad parameters for `mix.volume`: no tr
 | Method | Params | What it does |
 |---|---|---|
 | `engine.execute` (alias `command`) | `{command, params}` | Run a command programmatically. **Never opens a dialog**; empty params use defaults or the current selection. |
-| `engine.commands` | `{filter?}` | Every command: id, label, menu path, shortcut, params doc, enabled + reason. Includes UI-layer commands (`window.*`). |
+| `engine.commands` | `{filter?}` | Every command: id, label, menu path, shortcut, params doc, enabled + reason, audited capability status and evidence. Includes UI-layer commands (`window.*`). |
 | `engine.parity` | `{}` | Parity report against the incumbent's menu catalog. |
 | `session.inspect` | `{detail?: "summary"|"full"}` | The document: tracks, clips (with times), inserts (+params when full), sends, routing, automation, markers, groups, busses, sources (`loaded` true when decoded audio is in the pool), selection, zoom (`samples_per_px`, `scroll`), transport, undo label. |
 | `ui.inspect` | `{}` | UI state (`window`, panels, dialogs), window size, playing/position, audio device, and `edit_layout` (timeline rect and every track row's rect, for clicking). |
-| `ui.set` | any `UiState` fields | e.g. `{"window": "Mix", "narrow_mix": true}`. |
+| `ui.set` | any `UiState` fields | e.g. `{"window": "Mix", "narrow_mix": true}`. Piano Roll labels use `midi_note_labels` (`off`, `roots`, `all`), `midi_note_language` (`english`, `spanish`) and `midi_accidentals` (`sharps`, `flats`, `auto`). |
 | `ui.menu.list` | `{}` | Every catalog menu path and the command that implements it (or null). |
 | `ui.menu.invoke` | `{path}` or `{id}` | Like clicking the menu item: may open its dialog (e.g. `"Track > New..."`). |
 | `ui.click` | `{x, y, button?, count?, cmd?, shift?, alt?, ctrl?}` | Synthetic click (window points). |
@@ -81,11 +81,16 @@ where each script line is a request (`{"method": …, "params": …}`), `{"shot"
 `{"steps": n}`. Use `--system-theme light|dark|none` to supply the initial OS appearance, and
 script events such as `{"system_theme": "dark"}` to change it on subsequent frames.
 
-Appearance defaults to Dark. `ui.theme {"mode":"system"}` follows the appearance supplied by
+Languages & Themes defaults to Studio Dark. `ui.theme {"mode":"system"}` follows the appearance supplied by
 the native or web integration at launch and on later frames, while the saved choice stays System.
 When the integration cannot report an appearance, System uses Dark. Manual Light and Dark stay
 fixed when the OS appearance changes. An offscreen render without `--system-theme` supplies no
 OS appearance and therefore resolves System to Dark.
+
+`ui.theme` accepts `dark`, `light`, `nord`, `dracula`, `midnight-cyber`, `system` and `custom`.
+The `custom` mode is available only after the desktop UI has imported a validated version-1 JSON
+theme. See [`examples/theme-midnight-ocean.json`](examples/theme-midnight-ocean.json) for the
+portable semantic-color schema.
 
 ## Panel docking
 

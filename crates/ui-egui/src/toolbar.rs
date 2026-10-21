@@ -10,6 +10,7 @@ use soundcraft_model::{EditMode, Tool};
 use soundcraft_time::{TimeFormat, format_length};
 
 pub const HEIGHT: f32 = 78.0;
+const COMPACT_BREAKPOINT: f32 = 1_500.0;
 
 fn group(ui: &mut Ui, w: f32, h: f32, add: impl FnOnce(&mut Ui, Rect)) {
     let t = Tokens::current();
@@ -24,6 +25,10 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
     let full = ui.max_rect();
     ui.painter().rect_filled(full, 0.0, t.toolbar_bg);
     ui.add_space(4.0);
+    if compact_for_width(ui.available_width()) {
+        compact_toolbar(app, ui);
+        return;
+    }
     egui::ScrollArea::horizontal()
         .id_salt("edit_toolbar_scroll")
         .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
@@ -41,6 +46,162 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
                 output_meter(app, ui);
             });
         });
+}
+
+fn compact_for_width(width: f32) -> bool {
+    width < COMPACT_BREAKPOINT
+}
+
+/// Keeps the three essential transport actions and current position fixed at narrow widths.
+/// Everything else remains reachable from one overflow menu instead of being placed off-screen
+/// in a horizontally scrolled toolbar.
+fn compact_toolbar(app: &mut SoundApp, ui: &mut Ui) {
+    ui.horizontal(|ui| {
+        ui.add_space(8.0);
+        ui.spacing_mut().item_spacing.x = 8.0;
+        compact_transport(app, ui);
+        compact_counter(app, ui);
+        // At ordinary laptop widths the direct editing tools still fit beside the fixed
+        // transport. Only high-DPI/narrow windows move them into More.
+        if ui.available_width() >= 400.0 {
+            tools(app, ui);
+        }
+        compact_overflow(app, ui);
+        if ui.available_width() >= 42.0 {
+            output_meter(app, ui);
+        }
+    });
+}
+
+fn compact_transport(app: &mut SoundApp, ui: &mut Ui) {
+    let t = Tokens::current();
+    let playing = app.is_playing();
+    let recording = app.engine.transport.recording;
+    group(ui, 132.0, 52.0, |ui, g| {
+        ui.spacing_mut().item_spacing.x = 3.0;
+        for (icon, command, tip, fill, color) in [
+            ("stop", "transport.stop", "Stop (Space)", key_fill as fn(&egui::Response) -> Color32, if playing { t.text } else { t.accent }),
+            (
+                "play",
+                "transport.play",
+                "Play (Space)",
+                key_fill as fn(&egui::Response) -> Color32,
+                if playing { Color32::from_rgb(120, 255, 140) } else { t.counter_text },
+            ),
+            ("record", "transport.record", "Record (Cmd+Space)", key_fill as fn(&egui::Response) -> Color32, t.rec),
+        ] {
+            let (r, response) = ui.allocate_exact_size(vec2(38.0, 40.0), Sense::click());
+            let active_fill = match command {
+                "transport.play" if playing => Color32::from_rgb(40, 90, 50),
+                "transport.record" if recording => Color32::from_rgb(110, 30, 30),
+                _ => fill(&response),
+            };
+            key(ui.painter(), r, &response, active_fill);
+            icons::draw(ui.painter(), r.shrink(8.0), icon, color);
+            let response = response.on_hover_text(tip);
+            if command == "transport.record"
+                && let Some(why) = app.record_hint()
+            {
+                let below = Rect::from_min_max(r.min, pos2(r.max.x, g.max.y));
+                egui::Tooltip::always_open(ui.ctx().clone(), response.layer_id, response.id, below).show(|ui| ui.label(why));
+            }
+            if response.clicked() {
+                let _ = app.run(command, json!({}));
+            }
+        }
+    });
+}
+
+fn compact_counter(app: &mut SoundApp, ui: &mut Ui) {
+    let t = Tokens::current();
+    let format = app.engine.session().edit.main_counter;
+    let (r, _) = ui.allocate_exact_size(vec2(190.0, 52.0), Sense::hover());
+    ui.painter().rect(r, CornerRadius::same(4), t.counter_bg, Stroke::new(1.0, t.counter_border), StrokeKind::Inside);
+    ui.painter().text(pos2(r.min.x + 10.0, r.min.y + 12.0), Align2::LEFT_CENTER, format.label(), regular(10.0), t.counter_label);
+    ui.painter().text(pos2(r.center().x, r.min.y + 31.0), Align2::CENTER_CENTER, fmt_pos(app, app.position(), format), mono(20.0), t.counter_text);
+    let response = ui.interact(r, ui.id().with("compact_main_counter"), Sense::click());
+    egui::Popup::menu(&response).show(|ui| {
+        for candidate in TimeFormat::ALL {
+            if ui.selectable_label(format == candidate, candidate.label()).clicked() {
+                let _ = app.run("view.main_counter", json!({"format": candidate.id()}));
+                ui.close();
+            }
+        }
+    });
+    response.on_hover_text("Current position; click to change the time format");
+}
+
+fn compact_overflow(app: &mut SoundApp, ui: &mut Ui) {
+    let t = Tokens::current();
+    let (mode, tool, looped, grid_lines, click, countoff) = {
+        let edit = &app.engine.session().edit;
+        (edit.edit_mode, edit.tool, edit.loop_playback, edit.grid_lines, edit.click, edit.countoff)
+    };
+    group(ui, 78.0, 52.0, |ui, _| {
+        ui.centered_and_justified(|ui| {
+            ui.menu_button(egui::RichText::new(crate::i18n::text(app.ui.language, "More")).color(t.text), |ui| {
+                ui.menu_button(format!("Edit mode · {}", mode.label()), |ui| {
+                    for candidate in [EditMode::Shuffle, EditMode::Slip, EditMode::Spot, EditMode::Grid] {
+                        if ui.selectable_label(mode == candidate, candidate.label()).clicked() {
+                            mode_click(app, candidate, egui::Modifiers::NONE);
+                            ui.close();
+                        }
+                    }
+                });
+                ui.menu_button(format!("Tool · {}", tool.label()), |ui| {
+                    for candidate in [Tool::Zoom, Tool::Trim, Tool::Selector, Tool::Grabber, Tool::Scrubber, Tool::Pencil, Tool::Smart] {
+                        if ui.selectable_label(tool == candidate, candidate.label()).clicked() {
+                            let _ = app.run("edit.tool", json!({"tool": candidate.id()}));
+                            ui.close();
+                        }
+                    }
+                });
+                ui.menu_button("Zoom", |ui| {
+                    for (label, command) in [("Zoom in", "view.zoom_in"), ("Zoom out", "view.zoom_out"), ("Fit session", "view.zoom_fit")] {
+                        if ui.button(label).clicked() {
+                            let params =
+                                if command == "view.zoom_fit" { json!({"width_px": ui.ctx().content_rect().width() - 220.0}) } else { json!({}) };
+                            let _ = app.run(command, params);
+                            ui.close();
+                        }
+                    }
+                });
+                ui.separator();
+                if ui.selectable_label(looped, "Loop playback").clicked() {
+                    let _ = app.run("options.loop_playback", json!({}));
+                    ui.close();
+                }
+                if ui.selectable_label(grid_lines, "Grid lines").clicked() {
+                    let _ = app.run("view.grid_lines", json!({}));
+                    ui.close();
+                }
+                if ui.selectable_label(click, "Click").clicked() {
+                    let _ = app.run("options.click", json!({}));
+                    ui.close();
+                }
+                if ui.selectable_label(countoff, "Count off").clicked() {
+                    let _ = app.run("options.countoff", json!({}));
+                    ui.close();
+                }
+                ui.separator();
+                for (label, command) in [
+                    ("Return to zero", "transport.rtz"),
+                    ("Rewind", "transport.rewind"),
+                    ("Fast forward", "transport.fast_forward"),
+                    ("Go to end", "transport.go_to_end"),
+                ] {
+                    if ui.button(label).clicked() {
+                        let _ = app.run(command, json!({}));
+                        ui.close();
+                    }
+                }
+                if ui.button("Open Transport window…").clicked() {
+                    app.ui.show_transport = true;
+                    ui.close();
+                }
+            });
+        });
+    });
 }
 
 fn edit_modes(app: &mut SoundApp, ui: &mut Ui) {
@@ -432,5 +593,17 @@ fn output_meter(app: &mut SoundApp, ui: &mut Ui) {
     for c in 0..2 {
         let rr = Rect::from_min_size(pos2(r.min.x + 2.0 + c as f32 * (w + 2.0), r.min.y), vec2(w, r.height()));
         crate::widgets::meter(ui, rr, m.level[c], m.hold[c], m.clip);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compact_for_width;
+
+    #[test]
+    fn narrow_and_high_dpi_widths_keep_the_essential_toolbar_fixed() {
+        assert!(compact_for_width(960.0));
+        assert!(compact_for_width(480.0));
+        assert!(!compact_for_width(1_600.0));
     }
 }
